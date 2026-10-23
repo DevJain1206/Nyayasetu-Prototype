@@ -1,9 +1,9 @@
 /**
  * NyayaSetu — Comprehensive AI & Voice Gateway Test Suite
  * 1. Statutory Legal Analysis (/api/ai/analyze)
- * 2. Swayam Indic Voice Assistant (/api/ai/voice)
- * 3. Swayam Indic Voice Detection & STT (/api/ai/voice-detect)
- * 4. Swayam Indic Speech Synthesis (/api/ai/tts)
+ * 2. Bhashini Indic Voice Assistant (/api/ai/voice)
+ * 3. Bhashini Indic Voice Detection & STT (/api/ai/voice-detect)
+ * 4. Bhashini Indic Speech Synthesis (/api/ai/tts)
  */
 
 const assert = require('assert');
@@ -74,8 +74,8 @@ async function testAllAI() {
   assert.ok(dataAnalyze.court, 'Competent court must be provided');
   console.log('✔ [PASS] /api/ai/analyze returned authentic statutory classification: ' + dataAnalyze.act);
 
-  // Test 2: /api/ai/voice (Swayam Indic Multilingual Voice)
-  console.log('\nTest 2: Testing /api/ai/voice with Swayam Hindi query...');
+  // Test 2: /api/ai/voice (Bhashini Indic Multilingual Voice)
+  console.log('\nTest 2: Testing /api/ai/voice with Bhashini Hindi query...');
   const resVoice = await fetch('http://localhost:3000/api/ai/voice', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

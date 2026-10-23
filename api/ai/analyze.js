@@ -3,7 +3,7 @@
  * Strictly refers to the Constitution of India and statutory Indian enactments.
  */
 
-const GEMINI_KEY = process.env.GEMINI_KEY || Buffer.from('QVEuQWI4Uk42S01mamhWRFZ0ekRLMzJ0WFZGdEwtUFc0d0VDLURHeWJXUXlMWjdxRTQ2dmc=', 'base64').toString('utf8');
+const GEMINI_KEY = process.env.GEMINI_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 async function handleAnalyze(req, res) {

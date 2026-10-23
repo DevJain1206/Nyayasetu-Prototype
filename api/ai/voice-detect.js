@@ -1,5 +1,5 @@
 /**
- * NyayaSetu — Swayam / Sarvam Indic Voice Detection & Speech-to-Text API
+ * NyayaSetu — Bhashini Indic Voice Detection & Speech-to-Text API
  * Powered by Sarvam AI Saaras:v4 Indic Speech-to-Text Model
  */
 

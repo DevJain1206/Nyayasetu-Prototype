@@ -39,6 +39,7 @@ const handleSubmitSearch = require('./api/search/submit');
 // Import Statutory Legal Engine & Voice API handlers
 const handleAnalyze = require('./api/ai/analyze');
 const handleVoice = require('./api/ai/voice');
+const handleLawyerResearch = require('./api/ai/lawyer-research');
 const handleVoiceDetect = require('./api/ai/voice-detect');
 const handleTts = require('./api/ai/tts');
 
@@ -110,6 +111,11 @@ const server = http.createServer(async (req, res) => {
   // Statutory AI API 1: /api/ai/analyze
   if (pathname === '/api/ai/analyze') {
     return handleAnalyze(req, res);
+  }
+
+  // Advocate research API: separate Gemini credential and Google Search grounding
+  if (pathname === '/api/ai/lawyer-research') {
+    return handleLawyerResearch(req, res);
   }
 
   // Statutory AI API 2: /api/ai/voice

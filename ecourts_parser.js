@@ -33,19 +33,24 @@ function isWrongCaptcha(response) {
   if (!response) return false;
 
   if (typeof response === 'object') {
-    // In eCourts, status === 0 from searchByCNR indicates rejection/captcha failure
+    // If it is a portal WAF/session error (like Oops! Invalid Request), it is not a captcha mismatch
+    if (isPortalError(response)) {
+      return false;
+    }
+    // In eCourts, status === 0 from searchByCNR indicates captcha failure
     if (response.status === 0 || response.status === '0') {
       return true;
     }
     const msg = (response.errormsg || '').toLowerCase();
-    if (msg.includes('captcha') || msg.includes('invalid') || msg.includes('does not match')) {
+    if (msg.includes('captcha') || msg.includes('does not match')) {
       return true;
     }
   }
 
   if (typeof response === 'string') {
     const lower = response.toLowerCase();
-    if (lower.includes('invalid captcha') || lower.includes('captcha does not match')) {
+    if (isPortalError(lower)) return false;
+    if (lower.includes('invalid captcha') || lower.includes('captcha does not match') || lower.includes('wrong captcha')) {
       return true;
     }
   }

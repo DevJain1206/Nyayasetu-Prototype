@@ -39,9 +39,9 @@ Before engineering this integration, the official eCourts District Court portal 
 
 ---
 
-## Exact Portal Requests Replicated
+## eCourts CNR Request Flow
 
-Through browser network analysis and script inspection (`searchByCNR.js`, `components.js`), the exact three-stage request sequence for CNR search was recorded and replicated:
+NyayaSetu keeps CNR case-detail lookup. The linked [eCourt_Scrapper](https://github.com/abhijeetpandey0008/eCourt_Scrapper) scans cause-list documents for matches; its Streamlit implementation is not a full case-detail lookup. This integration follows the compatible per-session cookie and manual-captcha approach while using the portal's CNR search endpoint.
 
 ### Request 1: Portal Session Initialization
 - **Method**: `GET`
@@ -49,26 +49,35 @@ Through browser network analysis and script inspection (`searchByCNR.js`, `compo
 - **Headers**:
   - `User-Agent`: Desktop browser profile
   - `Accept`: `text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8`
-- **Outcome**: Captures session cookies (`SERVICES_SESSID`, `JSESSION`) and extracts any initial `app_token` hidden field.
+- **Outcome**: Captures session cookies and any initial `app_token` hidden field. The backend then reads the current AJAX verification header names and token from the portal's `components.js`; these values rotate and must not be hard-coded.
 
-### Request 2: Fetch Binary Security Captcha Image
+### Request 2: Read Current AJAX Verification Headers
 - **Method**: `GET`
-- **URL**: `https://services.ecourts.gov.in/ecourtindia_v6/vendor/securimage/securimage_show.php?<random_number>`
-- **Headers**:
-  - `Accept`: `image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8`
-  - `Referer`: `https://services.ecourts.gov.in/ecourtindia_v6/`
-  - `Cookie`: `SERVICES_SESSID=...; JSESSION=...`
-- **Outcome**: Receives binary PNG image (`image/png`), encoded to `data:image/png;base64,...` and returned to visitor UI.
+- **URL**: the `components.js` script referenced by the home page
+- **Headers**: same session `Cookie` and home-page `Referer`
+- **Outcome**: Reads the current `delimeter` value and custom verification-header name. Both rotate and are kept only in the in-memory search session.
 
-### Request 3: Submit CNR & Captcha
+### Request 3: Create a Captcha Challenge
+- **Method**: `POST`
+- **URL**: `https://services.ecourts.gov.in/ecourtindia_v6/?p=casestatus/getCaptcha`
+- **Headers**:
+  - `Accept`: `application/json, text/javascript, */*; q=0.01`
+  - `X-Requested-With`: `XMLHttpRequest`
+  - `Referer`: `https://services.ecourts.gov.in/ecourtindia_v6/`
+  - `Cookie`: the session cookies from Request 1
+  - Dynamic verification headers read from `components.js`
+- **Body**: `ajax_req=true&app_token=${appToken}`
+- **Outcome**: The portal returns the captcha image URL and session `app_token`. The backend fetches that exact image URL with the same cookie jar and returns it to the visitor for manual entry.
+
+### Request 4: Submit CNR & Captcha
 - **Method**: `POST`
 - **URL**: `https://services.ecourts.gov.in/ecourtindia_v6/?p=cnr_status/searchByCNR/`
 - **Headers**:
   - `Content-Type`: `application/x-www-form-urlencoded; charset=UTF-8`
   - `Accept`: `application/json, text/javascript, */*; q=0.01`
   - `X-Requested-With`: `XMLHttpRequest`
-  - `delimeter`: `sghder54` *(Critical eCourts CSRF header)*
-  - `Weritr645`: `sghder54` *(Critical eCourts verification header)*
+  - `delimeter`: current value read from `components.js`
+  - The current custom verification header name/value read from `components.js`
   - `Referer`: `https://services.ecourts.gov.in/ecourtindia_v6/`
   - `Cookie`: `SERVICES_SESSID=...; JSESSION=...`
 - **Body**: `cino=${cnr}&fcaptcha_code=${captcha}&ajax_req=true&app_token=${appToken}`
@@ -177,3 +186,15 @@ Open **`http://localhost:3000`** in your browser and click on **eCourts Tracker*
 2. **Geo-Blocking / IP Throttling**: The official eCourts portal may throttle or block server requests originating from foreign datacenter IP ranges (e.g., standard US-East AWS/GCP nodes). If deploying on cloud infrastructure, route requests through an Indian proxy or deploy within an Indian cloud region (e.g., AWS Mumbai `ap-south-1`).
 3. **Session Lifetime**: Court portal sessions time out on their server. NyayaSetu enforces a 10-minute TTL to match upstream behavior.
 4. **Scope**: Initial phase focuses exclusively on 16-character alphanumeric CNR lookups. Standard case-number search (state, district, court complex, year) can be built as a follow-up phase.
+
+---
+
+## 🔮 Future Scope & Roadmap
+
+In future releases and production expansions, NyayaSetu will incorporate:
+- **Expanded DigiLocker Document Integration**: Direct issuer pulling for court-certified orders, vakalatnama, cause list extracts, and automated tamper-proof evidence verification.
+- **Local LLMs for Offline / Air-Gapped Connectivity**: On-device / chamber-hosted models (e.g., Llama 3 / Mistral) enabling confidential statutory legal assistance without external API calls or internet dependency.
+- **Enhanced Indic Multilingual Expansion**: Support across all 22 Eighth Schedule Indian languages for voice guidance, statutory drafting, and translation of court proceedings.
+- **Zero-Knowledge End-to-End Encryption (E2EE)**: Client-side AES-GCM / hybrid cryptographic vaults for advocate-client chambers, ensuring complete confidentiality under Section 126 of the Indian Evidence Act.
+- **Automated Hearing Cause-List Monitoring**: Proactive notifications and automated diary synchronizations across district and high courts.
+

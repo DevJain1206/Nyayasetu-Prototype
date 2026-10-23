@@ -6,49 +6,211 @@
 let activeRole = 'citizen';
 let activeTab = 'assistant';
 
-// Role switching: Citizen vs Advocate Desk
-function switchRole(role) {
-  activeRole = role;
+let activeProfile = null;
+const PORTAL_PROFILES = {
+  dev: { id: 'dev', name: 'Dev Jain', role: 'citizen' },
+  mansvi: { id: 'mansvi', name: 'Mansvi Khupse', role: 'citizen' },
+  swati: { id: 'swati', name: 'Swati Kundu', role: 'advocate' }
+};
+const PORTAL_SESSION_KEY = 'nyayasetu_portal_profile';
+function portalProfileForDigiLockerUser(user) {
+  if (!user || !user.name) return null;
+  const name = String(user.name).trim().toLowerCase().replace(/\s+/g, ' ');
+  return Object.values(PORTAL_PROFILES).find(p => p.name.toLowerCase() === name) || null;
+}
+function activatePortalProfile(profileId) {
+  const profile = PORTAL_PROFILES[profileId];
+  if (!profile || !getDigiLockerUser()) return false;
+  activeProfile = profile;
+  localStorage.setItem(PORTAL_SESSION_KEY, JSON.stringify({id:profile.id}));
+  const modal = document.getElementById('modalDigiLockerLogin');
+  if (modal) modal.style.display = 'none';
+  applyPortalProfile();
+  return true;
+}
+function initPortalLogin() {
+  let saved=null; try { saved=JSON.parse(localStorage.getItem(PORTAL_SESSION_KEY)||'null'); } catch(e) {}
+  const user=getDigiLockerUser(), mapped=portalProfileForDigiLockerUser(user), selected=saved&&PORTAL_PROFILES[saved.id];
+  activeProfile=mapped&&(!selected||selected.id===mapped.id)?mapped:null;
+  if(activeProfile) applyPortalProfile();
+  else {
+    localStorage.removeItem(PORTAL_SESSION_KEY);
+    document.body.classList.remove('portal-app-active');
+    const modal = document.getElementById('modalDigiLockerLogin');
+    if (modal) modal.style.display = 'none';
+    showWelcomePage();
+  }
+}
+function logoutPortal() {
+  localStorage.removeItem(PORTAL_SESSION_KEY); localStorage.removeItem('nyayasetu_digilocker_user');
+  activeProfile=null; selectedClientRoomId=null; pendingClientRoomId=null; selectedLawyerRoomId=null; pendingLawyerRoomId=null; pendingAdvocateTotpSecret=null;
+  document.body.classList.remove('portal-app-active');
+  const modal = document.getElementById('modalDigiLockerLogin');
+  if (modal) modal.style.display = 'none';
+  renderDigiLockerHeaderUI();
+  showWelcomePage();
+}
+function applyPortalProfile() {
+  if (!activeProfile) return;
+  document.body.classList.add('portal-app-active');
+  activeRole = activeProfile.role;
+  const label = document.getElementById('activePortalProfile');
+  if (label) label.innerText = `${activeProfile.name} - ${activeRole === 'advocate' ? 'Advocate' : 'Client'}`;
+  const sharedNavs = ['nav-ecourts', 'nav-calendar'];
+  const advocateNavs = ['nav-lawyerrooms', 'nav-practicemgmt', 'nav-billable', 'nav-lawyerresearch'];
+  const citizenNavs = ['nav-assistant', 'nav-autodraft', 'nav-voicebot', 'nav-clientroom'];
+  [...sharedNavs, ...advocateNavs, ...citizenNavs].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const isShared = sharedNavs.includes(id);
+    el.style.display = isShared || (activeRole === 'advocate' ? advocateNavs.includes(id) : citizenNavs.includes(id)) ? 'inline-block' : 'none';
+  });
+  showTab(activeRole === 'advocate' ? 'lawyerrooms' : 'assistant');
+}
 
-  const btnCitizen = document.getElementById('btnRoleCitizen');
-  const btnAdvocate = document.getElementById('btnRoleAdvocate');
 
-  const advocateNavs = ['nav-lawyerrooms', 'nav-practicemgmt', 'nav-billable'];
-  const citizenNavs = ['nav-assistant', 'nav-autodraft', 'nav-voicebot', 'nav-ecourts', 'nav-bhulekh', 'nav-calendar', 'nav-clientroom'];
+function showWelcomePage() {
+  const welcome = document.getElementById('welcome-page');
+  const notFound = document.getElementById('not-found-page');
+  if (!welcome || document.body.classList.contains('portal-app-active')) return;
+  const path = window.location.pathname;
+  const validPath = path === '/' || path.endsWith('/index.html');
+  welcome.hidden = !validPath;
+  if (notFound) notFound.hidden = validPath;
+}
 
-  if (role === 'citizen') {
-    btnCitizen.className = 'btn-persona active';
-    btnAdvocate.className = 'btn-persona';
+const LEGAL_INFO_CONTENT = {
+  privacy: {
+    title: 'Privacy Policy',
+    html: '<p>NyayaSetu is a student-built prototype for legal information and case organization. This notice describes the prototype as it currently works.</p>' +
+      '<h3>Information in this prototype</h3><p>Demo profile choices, case-room details, messages, and document status may be stored in this browser so the demo can work between visits. The current prototype does not upload those room files to a NyayaSetu cloud database. Browser storage is not an appropriate place for confidential or highly sensitive records.</p>' +
+      '<h3>Demo identity and DigiLocker</h3><p>Demo profiles are examples and are not identity-verified. Selecting a demo profile does not authenticate through the Government of India DigiLocker service. Do not enter real Aadhaar details, OTPs, passwords, or private case documents into a demo flow.</p>' +
+      '<h3>Your choices and device</h3><p>Information saved by this prototype may remain in this browser until you clear its site data. Other people with access to this device or browser profile may be able to see it. Use the browser&#39;s site-data controls to remove locally saved prototype information.</p>' +
+      '<h3>AI research</h3><p>Questions entered in the advocate research assistant are sent to Google Gemini with Google Search grounding to prepare a response and source list. Do not include client names, identifying details, confidential facts, or private documents. Google handles these requests under its own applicable terms and data policies.</p>' +
+      '<h3>Third-party services</h3><p>When a feature opens an external government or other service, that service handles information under its own terms and privacy notice. NyayaSetu does not claim to be affiliated with or endorsed by those services.</p>' +
+      '<h3>Questions</h3><p>This is an educational prototype and does not yet provide a dedicated privacy-request or support channel.</p>'
+  },
+  terms: {
+    title: 'Terms of Use',
+    html: '<p>NyayaSetu is a student-built prototype intended for learning, general legal information, and demonstration of case-organization features.</p>' +
+      '<h3>Not legal advice</h3><p>Content and automated features are general information only. They are not legal advice, do not create a lawyer-client relationship, and do not replace advice from an advocate who has reviewed your circumstances. Check important information with a qualified advocate and the relevant court or authority.</p>' +
+      '<h3>Demo features</h3><p>Demo identities, case details, deadlines, messages, and documents may be sample data. They may be incomplete, inaccurate, or unavailable, and must not be relied on for a real filing, hearing, limitation period, or other legal deadline.</p>' +
+      '<h3>Use and sensitive information</h3><p>Do not use this prototype for urgent legal or safety matters. Do not enter real Aadhaar information, authentication codes, passwords, or confidential case documents into demo features. You are responsible for reviewing and independently verifying material before acting on it.</p>' +
+      '<h3>Availability and external services</h3><p>Features may change or stop working. Links and integrations to third-party services are subject to those services&#39; own terms. NyayaSetu does not guarantee their availability, accuracy, or response.</p>' +
+      '<h3>Prototype status</h3><p>Use of this prototype is voluntary and at your discretion. These terms explain the current demonstration; they are not a substitute for a signed engagement with an advocate or a formal service agreement.</p>'
+  }
+};
 
-    citizenNavs.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'inline-block';
-    });
-    advocateNavs.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
-    });
+function openLegalInfo(kind) {
+  const content = LEGAL_INFO_CONTENT[kind];
+  const modal = document.getElementById('legalInfoModal');
+  const title = document.getElementById('legalInfoTitle');
+  const body = document.getElementById('legalInfoContent');
+  if (!content || !modal || !title || !body) return;
+  title.textContent = content.title;
+  body.innerHTML = content.html;
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  document.getElementById('legalInfoClose')?.focus();
+  body.focus();
+}
 
+function closeLegalInfo() {
+  const modal = document.getElementById('legalInfoModal');
+  if (modal) modal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && document.getElementById('legalInfoModal')?.style.display === 'flex') closeLegalInfo();
+});
+
+async function submitLawyerResearch(event) {
+  if (event) event.preventDefault();
+  if (!activeProfile || activeProfile.role !== 'advocate') {
     showTab('assistant');
-  } else {
-    btnAdvocate.className = 'btn-persona active';
-    btnCitizen.className = 'btn-persona';
-
-    citizenNavs.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
+    return;
+  }
+  const input = document.getElementById('inpLawyerResearchQuery');
+  const button = document.getElementById('btnLawyerResearch');
+  const panel = document.getElementById('lawyerResearchResultPanel');
+  const answer = document.getElementById('lawyerResearchAnswer');
+  const sourcesPanel = document.getElementById('lawyerResearchSources');
+  const sourceList = document.getElementById('lawyerResearchSourceList');
+  const noOfficial = document.getElementById('lawyerResearchNoOfficial');
+  const status = document.getElementById('lawyerResearchGroundingStatus');
+  const query = input ? input.value.trim() : '';
+  if (!query) return;
+  if (button) { button.disabled = true; button.textContent = 'Searching official legal sources…'; }
+  if (panel) panel.style.display = 'block';
+  if (answer) answer.textContent = 'Searching and preparing a research note…';
+  if (sourcesPanel) sourcesPanel.hidden = true;
+  if (noOfficial) noOfficial.hidden = true;
+  if (sourceList) sourceList.replaceChildren();
+  try {
+    const response = await fetch('/api/ai/lawyer-research', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
     });
-    advocateNavs.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'inline-block';
-    });
-
-    showTab('lawyerrooms');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Legal research could not be completed.');
+    if (answer) answer.textContent = data.answer || 'No research note was returned.';
+    const sources = Array.isArray(data.sources) ? data.sources : [];
+    const officialSources = sources.filter(source => source.official);
+    if (sourcesPanel && sourceList && sources.length) {
+      sources.forEach((source, index) => {
+        const item = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = source.uri;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = source.title || new URL(source.uri).hostname;
+        item.appendChild(link);
+        const label = document.createElement('span');
+        label.className = source.official ? 'source-official-label' : 'source-web-label';
+        label.textContent = source.official ? 'Official court / government source' : 'Web source · verify independently';
+        item.appendChild(label);
+        sourceList.appendChild(item);
+      });
+      sourcesPanel.hidden = false;
+    }
+    if (noOfficial) noOfficial.hidden = officialSources.length > 0;
+    if (status) status.textContent = officialSources.length ? 'Official sources included' : 'No official source verified';
+  } catch (error) {
+    if (answer) answer.textContent = error.message || 'Unable to reach the legal research service.';
+    if (status) status.textContent = 'Research unavailable';
+    if (noOfficial) noOfficial.hidden = true;
+  } finally {
+    if (button) { button.disabled = false; button.textContent = 'Search and prepare research note'; }
   }
 }
 
+function startLandingLogin(role) {
+  if (activeProfile) {
+    showTab(role === 'advocate' ? 'lawyerrooms' : 'assistant');
+    return;
+  }
+  activeTeamMember = role === 'advocate' ? 'swati' : 'dev';
+  openDigiLockerModal(1, 'sandbox');
+  selectTeamMember(activeTeamMember);
+}
+
+// Role switching: Citizen vs Advocate Desk
+function switchRole(role) {
+  if (!activeProfile || role !== activeProfile.role) return;
+  applyPortalProfile();
+}
 // Tab navigation handler
 function showTab(tabName) {
+  if (!activeProfile) {
+    openDigiLockerModal(1,'sandbox');
+    return;
+  }
+  const advocateOnlyTabs = ['lawyerrooms', 'practicemgmt', 'billable', 'lawyerresearch'];
+  const citizenOnlyTabs = ['assistant', 'autodraft', 'voicebot', 'clientroom'];
+  if (activeProfile.role === 'advocate' && citizenOnlyTabs.includes(tabName)) tabName = 'lawyerrooms';
+  if (activeProfile.role === 'citizen' && advocateOnlyTabs.includes(tabName)) tabName = 'assistant';
   activeTab = tabName;
 
   document.querySelectorAll('.nav-link').forEach(btn => {
@@ -71,18 +233,18 @@ function showTab(tabName) {
   const titles = {
     'assistant': 'Statutory Grievance & Legal Guidance Portal',
     'autodraft': 'Court-Ready Document Drafter',
-    'voicebot': 'Swayam Indic Voice Assistant',
+    'voicebot': 'Bhashini Indic Voice Assistant',
     'ecourts': 'eCourts Live Case Status Tracker',
-    'bhulekh': 'Bhulekh & Land Records Explorer',
-    'calendar': 'Statutory Compliance & Limitation Calendar',
+    'calendar': 'Case Hearing Calendar',
     'clientroom': 'Private Case Room (Client View)',
     'lawyerrooms': 'Advocate Case Rooms & Document Verification Desk',
     'practicemgmt': 'Litigation Docket & Practice Management',
-    'billable': 'Billable Hours & Associate Tasks'
+    'billable': 'Billable Hours & Associate Tasks',
+    'lawyerresearch': 'Legal Research Assistant'
   };
 
   if (breadcrumb) {
-    const parent = (tabName === 'lawyerrooms' || tabName === 'practicemgmt' || tabName === 'billable') 
+    const parent = (tabName === 'lawyerrooms' || tabName === 'practicemgmt' || tabName === 'billable' || tabName === 'lawyerresearch' || (tabName === 'calendar' && activeRole === 'advocate'))
       ? 'Advocate Desk' : 'Citizen Services';
     breadcrumb.innerHTML = `Home &gt; ${parent} &gt; <strong>${titles[tabName] || tabName}</strong>`;
   }
@@ -93,115 +255,118 @@ function showTab(tabName) {
     renderClientRoom();
   } else if (tabName === 'lawyerrooms') {
     renderLawyerRoom();
+  } else if (tabName === 'ecourts') {
+    renderRecentSearches();
+  } else if (tabName === 'calendar') {
+    renderTrackedCases();
+  } else if (tabName === 'practicemgmt' || tabName === 'billable') {
+    renderPracticeDocket();
   }
+  updateBillingAuthenticatorPanel();
+}
+
+const TEXT_SIZE_STORAGE_KEY = 'nyayasetu_text_size';
+const originalTextMetrics = new WeakMap();
+let activeTextSize = 'normal';
+let textSizeObserver = null;
+
+function applyTextSize(size) {
+  const scale = size === 'small' ? 0.9 : size === 'large' ? 1.15 : 1;
+  const elements = Array.from(document.body.querySelectorAll('*')).filter(element => {
+    if (element.closest('svg, script, style')) return false;
+    const hasText = Array.from(element.childNodes).some(node => node.nodeType === Node.TEXT_NODE && node.nodeValue.trim());
+    return hasText || element.matches('input, textarea, select');
+  });
+  const metrics = elements.map(element => {
+    let original = originalTextMetrics.get(element);
+    if (!original) {
+      const computed = getComputedStyle(element);
+      original = {
+        fontSize: parseFloat(computed.fontSize) || 13,
+        lineHeight: computed.lineHeight === 'normal' ? null : parseFloat(computed.lineHeight),
+        inlineFontSize: element.style.getPropertyValue('font-size'),
+        inlineFontPriority: element.style.getPropertyPriority('font-size'),
+        inlineLineHeight: element.style.getPropertyValue('line-height'),
+        inlineLinePriority: element.style.getPropertyPriority('line-height')
+      };
+      originalTextMetrics.set(element, original);
+    }
+    return { element, original };
+  });
+  metrics.forEach(({ element, original }) => {
+    if (scale === 1) {
+      if (original.inlineFontSize) element.style.setProperty('font-size', original.inlineFontSize, original.inlineFontPriority);
+      else element.style.removeProperty('font-size');
+      if (original.inlineLineHeight) element.style.setProperty('line-height', original.inlineLineHeight, original.inlineLinePriority);
+      else element.style.removeProperty('line-height');
+      return;
+    }
+    element.style.setProperty('font-size', (original.fontSize * scale).toFixed(2) + 'px', 'important');
+    if (original.lineHeight) element.style.setProperty('line-height', (original.lineHeight * scale).toFixed(2) + 'px', 'important');
+  });
 }
 
 function changeFontSize(size) {
-  if (size === 'small') document.body.style.fontSize = '12px';
-  else if (size === 'large') document.body.style.fontSize = '15px';
-  else document.body.style.fontSize = '13px';
+  if (!['small', 'normal', 'large'].includes(size)) return;
+  activeTextSize = size;
+  document.body.dataset.textSize = size;
+  try { localStorage.setItem(TEXT_SIZE_STORAGE_KEY, size); } catch (error) {}
+  applyTextSize(size);
+  document.querySelectorAll('.accessibility-tools button[onclick^="changeFontSize"]').forEach(button => {
+    const selected = button.getAttribute('onclick').includes("'" + size + "'");
+    button.setAttribute('aria-pressed', String(selected));
+  });
+}
+
+function initTextSizeControls() {
+  let savedSize = 'normal';
+  try {
+    const saved = localStorage.getItem(TEXT_SIZE_STORAGE_KEY);
+    if (['small', 'normal', 'large'].includes(saved)) savedSize = saved;
+  } catch (error) {}
+  changeFontSize(savedSize);
+  if (!textSizeObserver) {
+    textSizeObserver = new MutationObserver(() => {
+      if (activeTextSize !== 'normal') applyTextSize(activeTextSize);
+    });
+    textSizeObserver.observe(document.body, { childList: true, subtree: true });
+  }
 }
 
 // Case Rooms State Management (1 Client Room, 2 Lawyer Rooms + Dynamic Code Sharing)
 let selectedClientRoomId = null;
+let pendingClientRoomId = null;
 let selectedLawyerRoomId = null;
+let pendingLawyerRoomId = null;
+let pendingAdvocateTotpSecret = null;
 
-const DEFAULT_ROOMS = [
-  {
-    id: "NYAYA-701",
-    token: "NYAYA-701-K9",
-    caseTitle: "Dev Jain vs. Patanjali Ayurved Ltd (Commercial Dispute 142/2024)",
-    clientName: "Dev Jain",
-    lawyerName: "Adv. Swati Kundu",
-    court: "Civil Court Senior Division, Nagpur",
-    nextHearing: "28-09-2026",
-    visibleToClient: true,
-    visibleToLawyer: true,
-    documents: [
-      {
-        id: 1,
-        name: "Original Cheque Return Memo & Bank Slip",
-        dueDate: "18-09-2026",
-        file: "2. Unit II -OFDM Transmitter Numericals_compressed.pdf",
-        filePath: "Example_Files/2. Unit II -OFDM Transmitter Numericals_compressed.pdf",
-        status: "accepted",
-        uploadDate: "15-09-2026"
-      },
-      {
-        id: 2,
-        name: "Tender Technical Specification Paper",
-        dueDate: "20-09-2026",
-        file: "AI_in_Modeling_Unit II.pptx",
-        filePath: "Example_Files/AI_in_Modeling_Unit II.pptx",
-        status: "uploaded",
-        uploadDate: "16-09-2026"
-      },
-      {
-        id: 3,
-        name: "System Architecture & SDLC Diagram",
-        dueDate: "22-09-2026",
-        file: null,
-        filePath: null,
-        status: "pending_upload",
-        uploadDate: null
-      }
-    ],
-    messages: [
-      { sender: "Adv. Swati Kundu", text: "Namaste Dev. Please upload the requested case documents so we can prepare the court injunction rejoinder.", time: "09:30 AM" },
-      { sender: "Dev Jain (Client)", text: "Yes Adv. Swati, I have uploaded the first two files from our case records. Checking the third one now.", time: "09:35 AM" }
-    ]
-  },
-  {
-    id: "NYAYA-702",
-    token: "NYAYA-702-T8",
-    caseTitle: "Tata Sons vs. Aditya Birla Group (Commercial Arbitration 44/2025)",
-    clientName: "Mansvi Khupse",
-    lawyerName: "Adv. Swati Kundu",
-    court: "Bombay High Court (Commercial Division)",
-    nextHearing: "05-10-2026",
-    visibleToClient: false,
-    visibleToLawyer: true,
-    documents: [
-      {
-        id: 1,
-        name: "Master Service Agreement & Commercial Terms",
-        dueDate: "25-09-2026",
-        file: "Unit -1 AI in SDLC.pptx",
-        filePath: "Example_Files/Unit -1 AI in SDLC.pptx",
-        status: "uploaded",
-        uploadDate: "16-09-2026"
-      },
-      {
-        id: 2,
-        name: "Board Resolution & Power of Attorney",
-        dueDate: "28-09-2026",
-        file: null,
-        filePath: null,
-        status: "pending_upload",
-        uploadDate: null
-      }
-    ],
-    messages: [
-      { sender: "Adv. Swati Kundu", text: "Welcome Mansvi. Please upload the certified Board Resolution copy for filing.", time: "11:00 AM" },
-      { sender: "Mansvi Khupse (Client)", text: "Uploaded the MSA agreement. Getting the Board resolution stamped.", time: "11:30 AM" }
-    ]
-  }
-];
+const DEFAULT_ROOMS = [];
+const LEGACY_DEFAULT_ROOM_IDS = new Set(['NYAYA-701', 'NYAYA-702', 'NYAYA-703', 'NYAYA-704', 'NYAYA-705']);
 
 function getAllRooms() {
   const stored = localStorage.getItem('nyayasetu_case_rooms_store');
   if (stored) {
     try {
       const parsed = JSON.parse(stored);
-      if (Array.isArray(parsed) && parsed.length >= 2) {
-        return parsed;
+      if (Array.isArray(parsed)) {
+        const cleaned = parsed
+          .filter(room => room && !LEGACY_DEFAULT_ROOM_IDS.has(room.id))
+          .map(room => {
+            // Remove passwords from the previous local-only advocate room gate.
+            if (room.roomPassword) { delete room.roomPassword; room.clientPasswords = {}; }
+            if (room.lawyerPasswords) delete room.lawyerPasswords;
+            return room;
+          });
+        if (cleaned.length !== parsed.length || JSON.stringify(cleaned) !== JSON.stringify(parsed)) {
+          localStorage.setItem('nyayasetu_case_rooms_store', JSON.stringify(cleaned));
+        }
+        return cleaned;
       }
     } catch (e) {}
   }
   localStorage.setItem('nyayasetu_case_rooms_store', JSON.stringify(DEFAULT_ROOMS));
-  return JSON.parse(JSON.stringify(DEFAULT_ROOMS));
+  return [];
 }
-
 function saveAllRooms(rooms) {
   localStorage.setItem('nyayasetu_case_rooms_store', JSON.stringify(rooms));
   if (activeTab === 'clientroom') renderClientRoom();
@@ -235,13 +400,16 @@ function renderClientRoomsList() {
   if (!tbody) return;
 
   const rooms = getAllRooms();
-  const clientRooms = rooms.filter(r => r.visibleToClient === true);
+const clientRooms = rooms.filter(room => room.visibleToClient === true && activeProfile &&
+    ((Array.isArray(room.clientProfileIds) && room.clientProfileIds.includes(activeProfile.id)) ||
+      (!Array.isArray(room.clientProfileIds) && room.clientName === activeProfile.name)));
   if (countBadge) countBadge.innerText = `${clientRooms.length} Active Room${clientRooms.length === 1 ? '' : 's'}`;
 
   tbody.innerHTML = clientRooms.map(room => {
     return `
       <tr>
         <td><strong>${room.token}</strong></td>
+        <td>${room.caseNumber || 'Not provided'}</td>
         <td><strong>${room.caseTitle}</strong></td>
         <td>${room.lawyerName}</td>
         <td>${room.court}</td>
@@ -255,12 +423,13 @@ function renderClientRoomsList() {
 }
 
 function openClientRoom(roomId) {
-  selectedClientRoomId = roomId;
-  renderClientRoom();
+  showClientRoomPasswordGate(roomId);
 }
 
 function closeClientRoom() {
   selectedClientRoomId = null;
+  pendingClientRoomId = null;
+  cancelClientRoomPasswordGate();
   renderClientRoom();
 }
 
@@ -275,21 +444,131 @@ function joinRoomByCode() {
   if (!inp) return;
   const code = inp.value.trim().toUpperCase();
   if (!code) {
-    alert("Please enter a valid invitation code.");
+    alert('Please enter a valid invitation code.');
     return;
   }
   const rooms = getAllRooms();
-  const found = rooms.find(r => r.token.toUpperCase() === code || r.id.toUpperCase() === code);
-  if (found) {
-    found.visibleToClient = true;
-    saveAllRooms(rooms);
-    alert(`Connected to Case Room: "${found.caseTitle}". Entering room now...`);
-    openClientRoom(found.id);
-  } else {
+  const found = rooms.find(room => String(room.token || '').toUpperCase() === code || String(room.id || '').toUpperCase() === code);
+  if (!found) {
     alert(`No case room found matching invitation code "${code}". Please verify the code with your advocate.`);
+    return;
   }
+
+  showClientRoomPasswordGate(found.id);
 }
 
+function showClientRoomPasswordGate(roomId) {
+  if (!activeProfile || activeProfile.role !== 'citizen') return;
+  const room = getRoomById(roomId);
+  if (!room) return;
+  pendingClientRoomId = room.id;
+  selectedClientRoomId = null;
+  const listView = document.getElementById('clientRoomsListView');
+  const detailView = document.getElementById('clientRoomDetailView');
+  const joinForm = document.getElementById('clientRoomAccessForm');
+  const roomsPanel = document.getElementById('clientRoomsListPanel');
+  const gate = document.getElementById('roomPasswordGate');
+  const title = document.getElementById('roomPasswordGateTitle');
+  const password = document.getElementById('inpRoomPassword');
+  const error = document.getElementById('roomPasswordError');
+  const recovery = document.getElementById('roomPasswordRecoveryView');
+  const entryForm = document.getElementById('roomPasswordEntryForm');
+  const confirmWrap = document.getElementById('roomPasswordConfirmWrap');
+  const passwordLabel = document.getElementById('roomPasswordLabel');
+  const submitButton = document.getElementById('roomPasswordSubmit');
+  const savedClientPassword = room.clientPasswords && room.clientPasswords[activeProfile.id];
+  if (confirmWrap) confirmWrap.style.display = savedClientPassword ? 'none' : 'block';
+  if (passwordLabel) passwordLabel.innerText = savedClientPassword ? 'Room password:' : 'Create a room password:';
+  if (submitButton) submitButton.innerText = savedClientPassword ? 'Open Case Room' : 'Set Password & Join';
+  if (title) title.innerText = savedClientPassword ? `Password required for ${room.caseTitle}` : `Create a password to join ${room.caseTitle}`;
+
+  if (listView) listView.style.display = 'block';
+  if (detailView) detailView.style.display = 'none';
+  if (joinForm) joinForm.style.display = 'none';
+  if (roomsPanel) roomsPanel.style.display = 'none';
+  if (gate) gate.style.display = 'block';
+  if (password) { password.value = ''; password.focus(); }
+  const confirmInput = document.getElementById('inpRoomPasswordConfirm');
+  if (confirmInput) confirmInput.value = '';
+  if (error) { error.style.display = 'none'; error.innerText = ''; }
+  if (recovery) recovery.style.display = 'none';
+  if (entryForm) entryForm.style.display = 'block';
+}
+
+function verifyClientRoomPassword() {
+  const room = getRoomById(pendingClientRoomId);
+  const password = document.getElementById('inpRoomPassword');
+  const confirm = document.getElementById('inpRoomPasswordConfirm');
+  const error = document.getElementById('roomPasswordError');
+  if (!room || !password || !activeProfile || activeProfile.role !== 'citizen') return;
+  const clientPasswords = room.clientPasswords || (room.clientPasswords = {});
+  const savedPassword = clientPasswords[activeProfile.id];
+
+  if (savedPassword) {
+    if (password.value !== savedPassword) {
+      if (error) { error.innerText = 'Incorrect room password. Please try again.'; error.style.display = 'block'; }
+      password.select();
+      return;
+    }
+  } else {
+    if (password.value.length < 6) {
+      if (error) { error.innerText = 'Choose a password with at least 6 characters.'; error.style.display = 'block'; }
+      password.focus();
+      return;
+    }
+    if (!confirm || password.value !== confirm.value) {
+      if (error) { error.innerText = 'The password and confirmation do not match.'; error.style.display = 'block'; }
+      if (confirm) confirm.select();
+      return;
+    }
+    clientPasswords[activeProfile.id] = password.value;
+    room.clientProfileIds = Array.isArray(room.clientProfileIds) ? room.clientProfileIds : [];
+    if (!room.clientProfileIds.includes(activeProfile.id)) room.clientProfileIds.push(activeProfile.id);
+    room.clientName = activeProfile.name;
+    room.visibleToClient = true;
+    const rooms = getAllRooms();
+    const index = rooms.findIndex(item => item.id === room.id);
+    if (index >= 0) { rooms[index] = room; saveAllRooms(rooms); }
+  }
+
+  const roomId = room.id;
+  cancelClientRoomPasswordGate();
+  selectedClientRoomId = roomId;
+  renderClientRoom();
+}
+function showDigiLockerPasswordRecovery() {
+  const entryForm = document.getElementById('roomPasswordEntryForm');
+  const recovery = document.getElementById('roomPasswordRecoveryView');
+  if (entryForm) entryForm.style.display = 'none';
+  if (recovery) recovery.style.display = 'block';
+}
+
+function returnToRoomPasswordEntry() {
+  const entryForm = document.getElementById('roomPasswordEntryForm');
+  const recovery = document.getElementById('roomPasswordRecoveryView');
+  if (entryForm) entryForm.style.display = 'block';
+  if (recovery) recovery.style.display = 'none';
+}
+
+function cancelClientRoomPasswordGate() {
+  pendingClientRoomId = null;
+  const joinForm = document.getElementById('clientRoomAccessForm');
+  const roomsPanel = document.getElementById('clientRoomsListPanel');
+  const gate = document.getElementById('roomPasswordGate');
+  const password = document.getElementById('inpRoomPassword');
+  const error = document.getElementById('roomPasswordError');
+  const recovery = document.getElementById('roomPasswordRecoveryView');
+  const entryForm = document.getElementById('roomPasswordEntryForm');
+  if (joinForm) joinForm.style.display = 'block';
+  if (roomsPanel) roomsPanel.style.display = 'block';
+  if (gate) gate.style.display = 'none';
+  if (password) password.value = '';
+  const confirmInput = document.getElementById('inpRoomPasswordConfirm');
+  if (confirmInput) confirmInput.value = '';
+  if (error) { error.style.display = 'none'; error.innerText = ''; }
+  if (recovery) recovery.style.display = 'none';
+  if (entryForm) entryForm.style.display = 'block';
+}
 function renderClientRoomDetail(roomId) {
   const room = getRoomById(roomId);
   if (!room) {
@@ -301,6 +580,7 @@ function renderClientRoomDetail(roomId) {
   const lawyerEl = document.getElementById('clientRoomLawyerName');
   const courtEl = document.getElementById('clientRoomCourt');
   const hearingEl = document.getElementById('clientRoomNextHearing');
+  const caseNumberEl = document.getElementById('clientRoomCaseNumber');
   const codeBadge = document.getElementById('clientRoomCodeBadge');
   const statusBadge = document.getElementById('clientRoomBadge');
   const container = document.getElementById('clientDocRequestsContainer');
@@ -309,7 +589,13 @@ function renderClientRoomDetail(roomId) {
   if (titleEl) titleEl.innerText = `Room #${room.id}: ${room.caseTitle}`;
   if (lawyerEl) lawyerEl.innerText = room.lawyerName;
   if (courtEl) courtEl.innerText = room.court;
-  if (hearingEl) hearingEl.innerText = room.nextHearing;
+  if (hearingEl) hearingEl.innerText = room.nextHearingDate || room.nextHearing;
+  const caseEl = document.getElementById('lawyerRoomCaseNumber');
+  const caseInput = document.getElementById('inpLawyerRoomCaseNumber');
+  const hearingInput = document.getElementById('inpLawyerRoomNextHearing');
+  if (caseEl) caseEl.innerText = room.caseNumber || 'Not provided';
+  if (caseInput) caseInput.value = room.caseNumber || '';
+  if (hearingInput) hearingInput.value = /^\d{4}-\d{2}-\d{2}$/.test(room.nextHearingDate || '') ? room.nextHearingDate : '';
   if (codeBadge) codeBadge.innerText = `Code: ${room.token}`;
 
   const pendingReview = room.documents.filter(d => d.status === 'uploaded').length;
@@ -403,16 +689,7 @@ function renderClientRoomDetail(roomId) {
   }
 
   if (chatLog) {
-    chatLog.innerHTML = room.messages.map(m => {
-      const isClient = m.sender.includes('Client') || m.sender.includes(room.clientName);
-      return `
-        <div class="chat-row ${isClient ? 'user' : 'bot'}">
-          <strong>${m.sender}:</strong><br>
-          ${m.text}
-          <div class="chat-time">${m.time}</div>
-        </div>
-      `;
-    }).join('');
+    chatLog.innerHTML = room.messages.map(renderMatterChatMessage).join('');
     chatLog.scrollTop = chatLog.scrollHeight;
   }
 }
@@ -505,7 +782,8 @@ function renderLawyerRoomsList() {
   if (!tbody) return;
 
   const rooms = getAllRooms();
-  const lawyerRooms = rooms.filter(r => r.visibleToLawyer === true);
+const lawyerRooms = rooms.filter(room => room.visibleToLawyer === true && activeProfile &&
+    (room.lawyerProfileId === activeProfile.id || (!room.lawyerProfileId && String(room.lawyerName || '').replace(/^Adv\.\s*/, '') === activeProfile.name)));
   if (countBadge) countBadge.innerText = `${lawyerRooms.length} Rooms Available`;
 
   tbody.innerHTML = lawyerRooms.map(room => {
@@ -527,6 +805,7 @@ function renderLawyerRoomsList() {
     return `
       <tr>
         <td><strong>${room.token}</strong></td>
+        <td>${room.caseNumber || 'Not provided'}</td>
         <td><strong>${room.caseTitle}</strong></td>
         <td>${room.clientName}</td>
         <td>${room.court}</td>
@@ -541,8 +820,150 @@ function renderLawyerRoomsList() {
 }
 
 function openLawyerRoom(roomId) {
-  selectedLawyerRoomId = roomId;
-  renderLawyerRoom();
+  if (!activeProfile || activeProfile.role !== 'advocate') return;
+  if (activeTab !== 'lawyerrooms') showTab('lawyerrooms');
+  const room = getRoomById(roomId);
+  if (!room || (room.lawyerProfileId && room.lawyerProfileId !== activeProfile.id)) return;
+  pendingLawyerRoomId = room.id;
+  selectedLawyerRoomId = null;
+  const listView = document.getElementById('lawyerRoomsListView');
+  const detailView = document.getElementById('lawyerRoomDetailView');
+  const gate = document.getElementById('lawyerAuthenticatorGate');
+  const secretBlock = document.getElementById('lawyerTotpSetup');
+  const secretOutput = document.getElementById('lawyerTotpSecret');
+  const input = document.getElementById('inpLawyerTotpCode');
+  const title = document.getElementById('lawyerAuthenticatorTitle');
+  const submit = document.getElementById('lawyerTotpSubmit');
+  const error = document.getElementById('lawyerAuthenticatorError');
+  const storageKey = `nyayasetu_advocate_totp_${activeProfile.id}`;
+  let storedSecret = localStorage.getItem(storageKey);
+  if (!storedSecret) {
+    storedSecret = generateAdvocateTotpSecret();
+    if (storedSecret) {
+      localStorage.setItem(storageKey, storedSecret);
+      localStorage.setItem(`${storageKey}_verified`, 'false');
+    }
+  }
+  pendingAdvocateTotpSecret = storedSecret;
+  if (listView) listView.style.display = 'none';
+  if (detailView) detailView.style.display = 'none';
+  if (gate) gate.style.display = 'block';
+  // Never show the big setup key when entering the chamber:
+  if (secretBlock) secretBlock.style.display = 'none';
+  if (secretOutput) secretOutput.innerText = '';
+  if (title) title.innerText = `Chamber Access — ${room.caseTitle}`;
+  if (submit) submit.innerText = 'Verify & Enter Chamber';
+  if (input) { input.value = ''; input.focus(); }
+  if (error) { error.style.display = 'none'; error.innerText = ''; }
+}
+
+function generateAdvocateTotpSecret() {
+  if (!window.crypto || !window.crypto.getRandomValues) return null;
+  const bytes = new Uint8Array(20);
+  window.crypto.getRandomValues(bytes);
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0, value = 0, encoded = '';
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) { encoded += alphabet[(value >>> (bits - 5)) & 31]; bits -= 5; value &= bits ? (1 << bits) - 1 : 0; }
+  }
+  if (bits > 0) encoded += alphabet[(value << (5 - bits)) & 31];
+  return encoded;
+}
+
+function decodeAdvocateTotpSecret(secret) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0, value = 0;
+  const bytes = [];
+  for (const character of String(secret || '').toUpperCase().replace(/=+$/g, '')) {
+    const index = alphabet.indexOf(character);
+    if (index < 0) throw new Error('Invalid authenticator setup key.');
+    value = (value << 5) | index;
+    bits += 5;
+    if (bits >= 8) { bytes.push((value >>> (bits - 8)) & 255); bits -= 8; value &= bits ? (1 << bits) - 1 : 0; }
+  }
+  return new Uint8Array(bytes);
+}
+
+async function generateAdvocateTotpCode(secret, timestamp = Date.now()) {
+  if (!window.crypto || !window.crypto.subtle) throw new Error('Time-based codes require localhost or HTTPS.');
+  const key = await window.crypto.subtle.importKey('raw', decodeAdvocateTotpSecret(secret), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const counter = Math.floor(timestamp / 30000);
+  const buffer = new ArrayBuffer(8);
+  const view = new DataView(buffer);
+  view.setUint32(0, Math.floor(counter / 0x100000000));
+  view.setUint32(4, counter >>> 0);
+  const digest = new Uint8Array(await window.crypto.subtle.sign('HMAC', key, buffer));
+  const index = digest[digest.length - 1] & 15;
+  const binary = ((digest[index] & 127) << 24) | ((digest[index + 1] & 255) << 16) | ((digest[index + 2] & 255) << 8) | (digest[index + 3] & 255);
+  return String(binary % 1000000).padStart(6, '0');
+}
+
+async function verifyAdvocateTotp(secret, code) {
+  if (!/^\d{6}$/.test(String(code).trim())) return false;
+  return (await generateAdvocateTotpCode(secret)) === String(code).trim();
+}
+
+function updateBillingAuthenticatorPanel() {
+  const panel = document.getElementById('billingAuthenticatorPanel');
+  if (!panel) return;
+  const isAdvocate = activeProfile && activeProfile.role === 'advocate';
+  const isBillableTab = activeTab === 'billable';
+  panel.style.display = (isAdvocate && isBillableTab) ? 'block' : 'none';
+  if (!isAdvocate || !isBillableTab) return;
+
+  const storageKey = `nyayasetu_advocate_totp_${activeProfile.id}`;
+  let secret = localStorage.getItem(storageKey);
+  if (!secret) {
+    secret = generateAdvocateTotpSecret();
+    if (!secret) return;
+    localStorage.setItem(storageKey, secret);
+    localStorage.setItem(`${storageKey}_verified`, 'false');
+  }
+  const label = encodeURIComponent(`NyayaSetu:${activeProfile.name}`);
+  const link = document.getElementById('billingTotpLink');
+  const secretOutput = document.getElementById('billingTotpSecret');
+  if (link) link.href = `otpauth://totp/${label}?secret=${encodeURIComponent(secret)}&issuer=NyayaSetu&period=30&digits=6`;
+  if (secretOutput) secretOutput.innerText = secret;
+}
+async function verifyLawyerRoomAuthenticator() {
+  if (!activeProfile || activeProfile.role !== 'advocate') return;
+  const room = getRoomById(pendingLawyerRoomId);
+  const input = document.getElementById('inpLawyerTotpCode');
+  const error = document.getElementById('lawyerAuthenticatorError');
+  if (!room || !input) return;
+  const showError = message => { if (error) { error.innerText = message; error.style.display = 'block'; } };
+  const code = input.value.trim();
+  if (!/^\d{6}$/.test(code)) { showError('Enter the current 6-digit Google Authenticator code.'); input.focus(); return; }
+  try {
+    const storageKey = `nyayasetu_advocate_totp_${activeProfile.id}`;
+    const savedSecret = localStorage.getItem(storageKey);
+    const secret = savedSecret || pendingAdvocateTotpSecret;
+    if (!secret) { showError('Authenticator setup could not start. Use localhost or HTTPS and try again.'); return; }
+    if (!await verifyAdvocateTotp(secret, code)) { showError('Code incorrect or expired. Enter the latest Google Authenticator code.'); input.select(); return; }
+    if (!savedSecret) localStorage.setItem(storageKey, secret);
+    localStorage.setItem(storageKey + '_verified', 'true');
+    pendingAdvocateTotpSecret = null;
+    pendingLawyerRoomId = null;
+    const gate = document.getElementById('lawyerAuthenticatorGate');
+    if (gate) gate.style.display = 'none';
+    selectedLawyerRoomId = room.id;
+    renderLawyerRoom();
+  } catch (e) {
+    showError(e && e.message ? e.message : 'Could not verify authenticator code. Try again.');
+  }
+}
+
+function cancelLawyerRoomAuthenticator() {
+  pendingLawyerRoomId = null;
+  pendingAdvocateTotpSecret = null;
+  const gate = document.getElementById('lawyerAuthenticatorGate');
+  const list = document.getElementById('lawyerRoomsListView');
+  if (gate) gate.style.display = 'none';
+  if (list) list.style.display = 'block';
+  const input = document.getElementById('inpLawyerTotpCode');
+  if (input) input.value = '';
 }
 
 function closeLawyerRoom() {
@@ -554,10 +975,14 @@ function createNewCaseRoom() {
   const titleInp = document.getElementById('inpCreateTitle');
   const clientInp = document.getElementById('inpCreateClient');
   const courtInp = document.getElementById('inpCreateCourt');
+  const caseNumberInp = document.getElementById('inpCreateCaseNumber');
+  const hearingInp = document.getElementById('inpCreateNextHearing');
 
   const title = titleInp ? titleInp.value.trim() : '';
   const client = clientInp ? clientInp.value.trim() : '';
   const court = courtInp ? courtInp.value.trim() : '';
+  const caseNumber = caseNumberInp ? caseNumberInp.value.trim().toUpperCase() : '';
+  const nextHearingDate = hearingInp ? hearingInp.value : '';
 
   if (!title || !client) {
     alert("Please enter both the Case / Matter Title and the Client Name.");
@@ -565,7 +990,13 @@ function createNewCaseRoom() {
   }
 
   const rooms = getAllRooms();
-  const nextNum = 700 + rooms.length + 1;
+  const usedRoomIds = new Set(rooms.map(room => String(room.id)));
+  const highestRoomNumber = rooms.reduce((highest, room) => {
+    const match = String(room.id || '').match(/^NYAYA-(\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 705);
+  let nextNum = highestRoomNumber + 1;
+  while (usedRoomIds.has(`NYAYA-${nextNum}`) || LEGACY_DEFAULT_ROOM_IDS.has(`NYAYA-${nextNum}`)) nextNum++;
   const roomId = `NYAYA-${nextNum}`;
   const randomSuffix = Math.random().toString(36).substring(2, 4).toUpperCase();
   const token = `NYAYA-${nextNum}-${randomSuffix}`;
@@ -575,12 +1006,15 @@ function createNewCaseRoom() {
     id: roomId,
     token: token,
     caseTitle: title,
+    caseNumber: caseNumber,
     clientName: client,
-    lawyerName: "Adv. Swati Kundu",
+    lawyerName: "Adv. " + (activeProfile ? activeProfile.name : "Swati Kundu"),
     court: court || "High Court Commercial Division",
-    nextHearing: "To be scheduled",
+    nextHearing: nextHearingDate || 'To be scheduled',
+    nextHearingDate: nextHearingDate,
     visibleToClient: false,
     visibleToLawyer: true,
+    lawyerProfileId: activeProfile ? activeProfile.id : null,
     documents: [],
     messages: [
       {
@@ -597,9 +1031,25 @@ function createNewCaseRoom() {
   if (titleInp) titleInp.value = '';
   if (clientInp) clientInp.value = '';
   if (courtInp) courtInp.value = '';
+  if (caseNumberInp) caseNumberInp.value = '';
+  if (hearingInp) hearingInp.value = '';
 
   alert(`Case Room created successfully!\n\nRoom ID: ${roomId}\nInvitation Code: ${token}\n\nShare this code with client ${client} to join.`);
   openLawyerRoom(roomId);
+}
+
+function saveLawyerRoomCaseInfo(roomId) {
+  if (!activeProfile || activeProfile.role !== 'advocate') return;
+  const rooms = getAllRooms();
+  const room = rooms.find(item => item.id === roomId && item.lawyerProfileId === activeProfile.id);
+  if (!room) return;
+  const caseInput = document.getElementById('inpLawyerRoomCaseNumber');
+  const hearingInput = document.getElementById('inpLawyerRoomNextHearing');
+  room.caseNumber = caseInput ? caseInput.value.trim().toUpperCase() : '';
+  room.nextHearingDate = hearingInput ? hearingInput.value : '';
+  room.nextHearing = room.nextHearingDate || 'To be scheduled';
+  saveAllRooms(rooms);
+  alert('Case number and next hearing saved. The client can see these details in the room and Compliance Calendar.');
 }
 
 function renderLawyerRoomDetail(roomId) {
@@ -614,6 +1064,11 @@ function renderLawyerRoomDetail(roomId) {
   const clientEl = document.getElementById('lawyerRoomClientName');
   const courtEl = document.getElementById('lawyerRoomCourt');
   const hearingEl = document.getElementById('lawyerRoomNextHearing');
+  const caseNumberEl = document.getElementById('lawyerRoomCaseNumber');
+  const caseNumberInput = document.getElementById('inpLawyerRoomCaseNumber');
+  const hearingInput = document.getElementById('inpLawyerRoomNextHearing');
+  if (caseNumberInput) caseNumberInput.value = room.caseNumber || '';
+  if (hearingInput) hearingInput.value = /^\d{4}-\d{2}-\d{2}$/.test(room.nextHearingDate || '') ? room.nextHearingDate : '';
   const reviewBadge = document.getElementById('lawyerRoomReviewBadge');
   const tbody = document.getElementById('lawyerDocTableBody');
   const chatLog = document.getElementById('lawyerChatLog');
@@ -622,7 +1077,8 @@ function renderLawyerRoomDetail(roomId) {
   if (titleEl) titleEl.innerText = `Case Chamber: ${room.caseTitle}`;
   if (clientEl) clientEl.innerText = room.clientName;
   if (courtEl) courtEl.innerText = room.court;
-  if (hearingEl) hearingEl.innerText = room.nextHearing;
+  if (hearingEl) hearingEl.innerText = room.nextHearingDate || room.nextHearing;
+  if (caseNumberEl) caseNumberEl.innerText = room.caseNumber || 'Not provided';
 
   const pendingReview = room.documents.filter(d => d.status === 'uploaded').length;
   if (reviewBadge) {
@@ -687,16 +1143,7 @@ function renderLawyerRoomDetail(roomId) {
   }
 
   if (chatLog) {
-    chatLog.innerHTML = room.messages.map(m => {
-      const isLawyer = m.sender.includes('Swati') || m.sender.includes('Mansvi') || m.sender.includes('Bhoomi') || m.sender.includes('Counsel') || m.sender.includes('Adv');
-      return `
-        <div class="chat-row ${isLawyer ? 'user' : 'bot'}">
-          <strong>${m.sender}:</strong><br>
-          ${m.text}
-          <div class="chat-time">${m.time}</div>
-        </div>
-      `;
-    }).join('');
+    chatLog.innerHTML = room.messages.map(renderMatterChatMessage).join('');
     chatLog.scrollTop = chatLog.scrollHeight;
   }
 }
@@ -1346,7 +1793,7 @@ function downloadPleadingText() {
 }
 
 // ==========================================================================
-// SWAYAM INDIC VOICE ASSISTANT
+// BHASHINI INDIC VOICE ASSISTANT
 // ==========================================================================
 
 let speechLang = 'hi-IN';
@@ -1445,7 +1892,7 @@ async function toggleRecordVoice() {
       btn.disabled = true;
     }
     if (status) {
-      status.innerText = 'Detecting Indic voice with Sarvam AI Saaras:v4...';
+      status.innerText = 'Detecting Indic voice...';
     }
 
     try {
@@ -1498,7 +1945,7 @@ async function toggleRecordGrievance() {
       btn.disabled = true;
     }
     if (status) {
-      status.innerText = 'Detecting speech with Sarvam AI Saaras:v4...';
+      status.innerText = 'Detecting speech...';
     }
 
     try {
@@ -1634,7 +2081,7 @@ async function speakAudio(encoded) {
       }
     }
   } catch (err) {
-    console.warn('Sarvam TTS error, falling back to speech synthesis:', err);
+    console.warn('Voice synthesis error, falling back to speech synthesis:', err);
   }
 
   // Graceful browser fallback
@@ -1652,6 +2099,9 @@ async function speakAudio(encoded) {
 // ==========================================================================
 
 const RECENT_CASES_STORAGE_KEY = 'nyayasetu_recent_cases';
+const TRACKED_CASES_STORAGE_KEY = 'nyayasetu_tracked_cases';
+function getTrackedCasesStorageKey() { return activeProfile ? TRACKED_CASES_STORAGE_KEY + '_' + activeProfile.id : TRACKED_CASES_STORAGE_KEY; }
+function getRecentCasesStorageKey() { return activeProfile && activeProfile.role === 'advocate' ? `${RECENT_CASES_STORAGE_KEY}_advocate_${activeProfile.id}` : RECENT_CASES_STORAGE_KEY; }
 let currentEcourtSessionId = null;
 let currentSnapshotCnr = null;
 
@@ -1878,7 +2328,7 @@ async function submitEcourtCaptcha() {
 
     if (!res.ok) {
       if (data.error === 'WRONG_CAPTCHA') {
-        showEcourtAlert('Captcha did not match. Please note: Captcha is CASE-SENSITIVE (e.g. lowercase letters). Click "Zoom In" to distinguish 8 vs B or 0 vs O. A fresh image is ready below.', 'error');
+        showEcourtAlert('eCourts rejected the previous entry. The image below is a NEW captcha and the entry field was cleared. Type the new image exactly, preserving letter case. Click "Zoom In" to distinguish similar characters.', 'error');
         if (data.captchaImage) {
           const captchaImg = document.getElementById('ecourtsCaptchaImg');
           if (captchaImg) captchaImg.src = data.captchaImage;
@@ -1974,7 +2424,7 @@ function renderCaseDetails(data, isSnapshot = false, savedAt = null) {
   if (respondentDisplay) respondentDisplay.innerText = data.respondent || '—';
 
   const stageDisplay = document.getElementById('stageDisplay');
-  if (stageDisplay) stageDisplay.innerText = data.stage || '—';
+  if (stageDisplay) stageDisplay.innerText = data.stage || '-';
 
   const nextHearing = data.nextHearingDate || 'Not Scheduled / Listed';
   const nextHearingDisplay = document.getElementById('nextHearingDisplay');
@@ -2030,7 +2480,7 @@ function renderCaseDetails(data, isSnapshot = false, savedAt = null) {
 
 function saveCaseSnapshot(data) {
   try {
-    const raw = localStorage.getItem(RECENT_CASES_STORAGE_KEY);
+    const raw = localStorage.getItem(getRecentCasesStorageKey());
     let list = raw ? JSON.parse(raw) : [];
 
     // Filter out existing item for same CNR
@@ -2053,8 +2503,17 @@ function saveCaseSnapshot(data) {
     // Cap at 10 recent searches
     if (list.length > 10) list = list.slice(0, 10);
 
-    localStorage.setItem(RECENT_CASES_STORAGE_KEY, JSON.stringify(list));
+    localStorage.setItem(getRecentCasesStorageKey(), JSON.stringify(list));
+    const tracked = getTrackedCases();
+    const trackedItem = tracked.find(item => item.cnr === data.cnr);
+    if (trackedItem) {
+      trackedItem.data = data;
+      trackedItem.savedAt = list[0].savedAt;
+      trackedItem.parties = list[0].parties;
+      localStorage.setItem(getTrackedCasesStorageKey(), JSON.stringify(tracked));
+    }
     renderRecentSearches();
+    renderTrackedCases();
   } catch (e) {
     console.error('Failed to save case snapshot:', e);
   }
@@ -2066,7 +2525,7 @@ function renderRecentSearches() {
   if (!container || !chipsWrapper) return;
 
   try {
-    const raw = localStorage.getItem(RECENT_CASES_STORAGE_KEY);
+    const raw = localStorage.getItem(getRecentCasesStorageKey());
     const list = raw ? JSON.parse(raw) : [];
 
     if (list.length === 0) {
@@ -2076,14 +2535,20 @@ function renderRecentSearches() {
     }
 
     container.style.display = 'block';
-    chipsWrapper.innerHTML = list.map(item => `
-      <div class="recent-case-chip" onclick="loadRecentSnapshot('${item.cnr}')" title="Click to view saved snapshot (${item.savedAt})">
-        <strong>${item.cnr}</strong>
-        <span class="badge badge-mini ${item.status.toLowerCase().includes('disposed') ? 'badge-green' : 'badge-orange'}">${item.status}</span>
-        <span style="color: #64748b;">${item.parties}</span>
-        <span style="font-size: 10px; color: #0284c7;">(${item.nextHearingDate})</span>
-      </div>
-    `).join('');
+    chipsWrapper.innerHTML = list.map(item => {
+      const tracked = isCaseTracked(item.cnr);
+      const status = String(item.status || 'Unknown');
+      const trackingButton = `<button type="button" class="btn btn-default btn-sm" onclick="toggleCaseTracking('${escapeHtml(item.cnr)}', event)">${tracked ? 'Stop tracking' : 'Start tracking'}</button>`;
+      return `
+        <div class="recent-case-chip" onclick="loadRecentSnapshot('${escapeHtml(item.cnr)}')" title="Click to view saved snapshot (${escapeHtml(item.savedAt || '')})">
+          <strong>${escapeHtml(item.cnr)}</strong>
+          <span class="badge badge-mini ${status.toLowerCase().includes('disposed') ? 'badge-green' : 'badge-orange'}">${escapeHtml(status)}</span>
+          <span style="color: #64748b;">${escapeHtml(item.parties || '')}</span>
+          <span style="font-size: 10px; color: #0284c7;">(${escapeHtml(item.nextHearingDate || 'Not scheduled')})</span>
+          ${trackingButton}
+        </div>
+      `;
+    }).join('');
   } catch (e) {
     container.style.display = 'none';
   }
@@ -2091,7 +2556,7 @@ function renderRecentSearches() {
 
 function loadRecentSnapshot(cnr) {
   try {
-    const raw = localStorage.getItem(RECENT_CASES_STORAGE_KEY);
+    const raw = localStorage.getItem(getRecentCasesStorageKey());
     const list = raw ? JSON.parse(raw) : [];
     const item = list.find(s => s.cnr === cnr);
     if (!item) return;
@@ -2119,291 +2584,289 @@ function refreshCurrentSnapshot() {
 }
 
 function clearRecentSearches() {
-  localStorage.removeItem(RECENT_CASES_STORAGE_KEY);
+  localStorage.removeItem(getRecentCasesStorageKey());
   renderRecentSearches();
 }
-
-// ==========================================================================
-// BHULEKH LAND RECORDS
-// ==========================================================================
-
-function onStateChange() {
-  const state = document.getElementById('selLandState').value;
-  const dist = document.getElementById('selLandDist');
-  dist.innerHTML = '';
-
-  if (state === 'MH') {
-    ['Nagpur', 'Pune', 'Thane'].forEach(d => dist.add(new Option(d, d)));
-    document.getElementById('inpTaluka').value = 'Nagpur Rural';
-    document.getElementById('inpVillage').value = 'Wadi';
-  } else if (state === 'UP') {
-    ['Lucknow', 'Varanasi', 'Prayagraj'].forEach(d => dist.add(new Option(d, d)));
-    document.getElementById('inpTaluka').value = 'Sadar';
-    document.getElementById('inpVillage').value = 'Mohanlalganj';
-  } else {
-    ['Bengaluru Urban', 'Mysuru', 'Belagavi'].forEach(d => dist.add(new Option(d, d)));
-    document.getElementById('inpTaluka').value = 'Bengaluru South';
-    document.getElementById('inpVillage').value = 'Kengeri';
+function getTrackedCases() {
+  try {
+    const key = getTrackedCasesStorageKey();
+    let raw = localStorage.getItem(key);
+    if (raw === null && activeProfile && activeProfile.role === 'citizen') {
+      raw = localStorage.getItem(TRACKED_CASES_STORAGE_KEY);
+      if (raw !== null) localStorage.setItem(key, raw);
+    }
+    const tracked = JSON.parse(raw || '[]');
+    return Array.isArray(tracked) ? tracked.filter(item => item && item.cnr && item.data) : [];
+  } catch (e) {
+    console.error('Failed to read tracked eCourts cases:', e);
+    return [];
   }
 }
 
-function fetchLandRecord() {
-  const state = document.getElementById('selLandState').value;
-  const dist = document.getElementById('selLandDist').value;
-  const taluka = document.getElementById('inpTaluka').value;
-  const village = document.getElementById('inpVillage').value;
-  const survey = document.getElementById('inpSurvey').value;
+function isCaseTracked(cnr) {
+  return getTrackedCases().some(item => item.cnr === cnr);
+}
 
-  document.getElementById('lblLandLocation').innerText = `${dist} / ${taluka} / ${village} (Gat ${survey})`;
+function toggleCaseTracking(cnr, event) {
+  if (event) event.stopPropagation();
+  try {
+    const tracked = getTrackedCases();
+    const existingIndex = tracked.findIndex(item => item.cnr === cnr);
+    if (existingIndex >= 0) {
+      tracked.splice(existingIndex, 1);
+    } else {
+      const snapshots = JSON.parse(localStorage.getItem(getRecentCasesStorageKey()) || '[]');
+      const snapshot = snapshots.find(item => item.cnr === cnr);
+      if (!snapshot || !snapshot.data) return;
+      tracked.push({ cnr: snapshot.cnr, data: snapshot.data, parties: snapshot.parties, savedAt: snapshot.savedAt, startedAt: new Date().toISOString() });
+    }
+    localStorage.setItem(getTrackedCasesStorageKey(), JSON.stringify(tracked));
+    renderRecentSearches();
+    renderTrackedCases();
+  } catch (e) {
+    console.error('Failed to update tracked eCourts cases:', e);
+  }
+}
 
-  const tbody = document.getElementById('tblLandBody');
-  const notes = document.getElementById('divMutationNotes');
+function parseEcourtsDate(value) {
+  const text = String(value || '').trim();
+  let match = text.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (match) return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]), 12);
+  match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+  return null;
+}
 
-  if (state === 'MH') {
-    tbody.innerHTML = `
-      <tr>
-        <td><strong>Kishore B. Raut</strong></td>
-        <td>0.82 Ha</td>
-        <td>Jirayat (Dry Crop)</td>
-        <td>Rs. 24.50</td>
-      </tr>
-      <tr>
-        <td><strong>Suman K. Raut</strong> (Joint Holder)</td>
-        <td>0.40 Ha</td>
-        <td>Bagayat (Irrigated)</td>
-        <td>Rs. 18.20</td>
-      </tr>
-    `;
-    notes.innerHTML = `
-      <div style="border-bottom: 1px dashed #ccc; padding-bottom: 5px; margin-bottom: 5px;">
-        <strong>Mutation No. 892 (Registered Bank Charge):</strong> Charge created in favour of State Bank of India, Agricultural Credit Branch for INR 3,50,000.
+function getHearingCountdown(value) {
+  const hearingDate = parseEcourtsDate(value);
+  if (!hearingDate) return { label: 'No hearing date', className: 'badge-blue' };
+  hearingDate.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((hearingDate - today) / 86400000);
+  if (days === 0) return { label: 'Today', className: 'badge-orange' };
+  if (days === 1) return { label: '1 day left', className: 'badge-orange' };
+  if (days > 1) return { label: `${days} days left`, className: 'badge-green' };
+  if (days === -1) return { label: '1 day overdue', className: 'badge-red' };
+  return { label: `${Math.abs(days)} days overdue`, className: 'badge-red' };
+}
+function openRoomFromCalendar(roomId) {
+  if (!activeProfile) return;
+  if (activeProfile.role === 'advocate') {
+    showTab('lawyerrooms');
+    openLawyerRoom(roomId);
+  } else {
+    showTab('clientroom');
+    openClientRoom(roomId);
+  }
+}
+
+function openEcourtsSnapshotFromCalendar(cnr) {
+  showTab('ecourts');
+  loadRecentSnapshot(cnr);
+}
+
+function renderTrackedCases() {
+  const tbody = document.getElementById('trackedCasesTableBody');
+  const emptyState = document.getElementById('trackedCasesEmptyState');
+  if (!tbody) return;
+  const description = document.getElementById('trackedCasesDescription');
+  const isAdvocate = activeProfile && activeProfile.role === 'advocate';
+  if (description) description.innerText = isAdvocate
+    ? 'Your tracked eCourts cases, saved case searches, and assigned private chambers appear here, sorted by the soonest hearing date.'
+    : 'Tracked eCourts cases and private rooms joined by you appear here, sorted by the soonest hearing date.';
+
+  const tracked = getTrackedCases().map(item => ({ ...item, type: 'ecourts', hearingDate: parseEcourtsDate(item.data.nextHearingDate) }));
+  const trackedCnrs = new Set(tracked.map(item => item.cnr));
+  let savedSearches = [];
+  if (isAdvocate) {
+    try {
+      const recent = JSON.parse(localStorage.getItem(getRecentCasesStorageKey()) || '[]');
+      savedSearches = (Array.isArray(recent) ? recent : []).filter(item => item && item.cnr && item.data && !trackedCnrs.has(item.cnr))
+        .map(item => ({ ...item, type: 'recent', hearingDate: parseEcourtsDate(item.data.nextHearingDate || item.nextHearingDate) }));
+    } catch (e) { savedSearches = []; }
+  }
+
+  const rooms = getAllRooms().filter(room => isAdvocate
+    ? room.visibleToLawyer === true && (room.lawyerProfileId === activeProfile.id || (!room.lawyerProfileId && String(room.lawyerName || '').replace(/^Adv\.\s*/, '') === activeProfile.name))
+    : room.visibleToClient === true && ((Array.isArray(room.clientProfileIds) && room.clientProfileIds.includes(activeProfile.id)) || (!Array.isArray(room.clientProfileIds) && room.clientName === activeProfile.name)))
+    .map(room => ({ type: 'room', roomId: room.id, cnr: room.caseNumber || room.token, parties: room.caseTitle,
+      data: { status: 'Private case room', nextHearingDate: room.nextHearingDate || room.nextHearing, stage: 'Case room' },
+      hearingDate: parseEcourtsDate(room.nextHearingDate || room.nextHearing), startedAt: room.joinedAt || '' }));
+
+  const items = [...tracked, ...savedSearches, ...rooms].sort((a, b) => {
+    if (a.hearingDate && b.hearingDate) return a.hearingDate - b.hearingDate;
+    if (a.hearingDate) return -1;
+    if (b.hearingDate) return 1;
+    return String(a.startedAt || a.savedAt || '').localeCompare(String(b.startedAt || b.savedAt || ''));
+  });
+  if (!items.length) { tbody.innerHTML = ''; if (emptyState) emptyState.style.display = 'block'; return; }
+  if (emptyState) emptyState.style.display = 'none';
+  tbody.innerHTML = items.map(item => {
+    const data = item.data;
+    const title = item.parties || data.caseType || 'eCourts case';
+    const status = data.status || 'Unknown';
+    const hearing = data.nextHearingDate || item.nextHearingDate || 'Not scheduled';
+    const countdown = getHearingCountdown(hearing);
+    let action;
+    if (item.type === 'room') action = `<button type="button" class="btn btn-default btn-sm" onclick="openRoomFromCalendar('${escapeHtml(item.roomId)}')">Open Room</button>`;
+    else if (item.type === 'recent') action = `<button type="button" class="btn btn-default btn-sm" onclick="openEcourtsSnapshotFromCalendar('${escapeHtml(item.cnr)}')">Open Search</button> <button type="button" class="btn btn-primary btn-sm" onclick="toggleCaseTracking('${escapeHtml(item.cnr)}')">Start tracking</button>`;
+    else action = `<button type="button" class="btn btn-default btn-sm" onclick="toggleCaseTracking('${escapeHtml(item.cnr)}')">Stop tracking</button>`;
+    return `<tr><td><strong>${escapeHtml(title)}</strong><br><code>${escapeHtml(item.cnr)}</code></td><td>${escapeHtml(status)}</td><td>${escapeHtml(hearing)}</td><td><span class="badge ${countdown.className}">${escapeHtml(countdown.label)}</span></td><td>${escapeHtml(data.stage || '-')}</td><td>${action}</td></tr>`;
+  }).join('');
+}
+
+function renderMatterChatMessage(message) {
+  if (message.type === 'billing_session' && message.session) {
+    const session = message.session;
+    return `
+      <div class="chat-row billing-session-card" style="background:#eff6ff;border:1px solid #93c5fd;border-left:4px solid #2563eb;border-radius:8px;padding:12px;margin:10px 0;">
+        <strong>Billable matter session</strong>
+        <div style="margin-top:6px;">${escapeHtml(session.activity || 'Legal work')}</div>
+        <div style="font-size:12px;color:#334155;margin-top:5px;">${escapeHtml(session.date || '')} | ${escapeHtml(session.startTime || '')} | ${escapeHtml(session.duration || '')}</div>
+        <div style="font-weight:700;color:#0f3b70;margin-top:6px;">Amount: INR ${Number(session.amount || 0).toLocaleString('en-IN')} at INR ${Number(session.hourlyRate || 2500).toLocaleString('en-IN')}/hour</div>
+        <div class="chat-time">Recorded by ${escapeHtml(message.sender || 'Advocate')} | ${escapeHtml(message.time || '')}</div>
       </div>
-      <div>
-        <strong>Mutation No. 741 (Testamentary Succession):</strong> Mutation sanctioned pursuant to succession under Section 149 of Maharashtra Land Revenue Code 1966.
-      </div>
-    `;
-  } else if (state === 'UP') {
-    tbody.innerHTML = `
-      <tr>
-        <td><strong>Ramprasad Tiwari</strong></td>
-        <td>1.1500 Ha</td>
-        <td>Bhumidhar with Transferable Rights</td>
-        <td>Rs. 42.00</td>
-      </tr>
-    `;
-    notes.innerHTML = `<div><strong>Khatauni Order 14-01-2024:</strong> Namantaran (Mutation) sanctioned by Naib Tehsildar under Section 34 of UP Revenue Code 2006.</div>`;
-  } else {
-    tbody.innerHTML = `
-      <tr>
-        <td><strong>Manjunath Gowda</strong></td>
-        <td>2 Acres 14 Guntas</td>
-        <td>Dry Land (Dry Crop)</td>
-        <td>Rs. 36.00</td>
-      </tr>
-    `;
-    notes.innerHTML = `<div><strong>Mutation MR No. T-1209:</strong> Certified under Karnataka Land Revenue Act 1964 with Bhoomi digital signature.</div>`;
-  }
-}
-
-// ==========================================================================
-// COMPLIANCE & LIMITATION CALENDAR
-// ==========================================================================
-
-function runLimitationCalc() {
-  const type = document.getElementById('selStatuteType').value;
-  const inputDate = new Date(document.getElementById('inpIncidentDate').value);
-  const out = document.getElementById('calcOutputBox');
-
-  if (isNaN(inputDate.getTime())) return;
-
-  if (type === 'ni138') {
-    const noticeDate = new Date(inputDate);
-    noticeDate.setDate(noticeDate.getDate() + 30);
-
-    const cureDate = new Date(noticeDate);
-    cureDate.setDate(cureDate.getDate() + 15);
-
-    const complaintDate = new Date(cureDate);
-    complaintDate.setDate(complaintDate.getDate() + 30);
-
-    out.innerHTML = `
-      <strong>SECTION 138 NI ACT STATUTORY STAGES:</strong><br>
-      1. Notice Dispatch Deadline (30 Days): <strong>${noticeDate.toDateString()}</strong><br>
-      2. 15-Day Statutory Cure Period: Drawer must pay by <strong>${cureDate.toDateString()}</strong><br>
-      3. Court Filing Limitation (30 Days): Complaint must be filed by <strong style="color: #b71c1c;">${complaintDate.toDateString()}</strong>.
-    `;
-  } else if (type === 'consumer') {
-    const limit = new Date(inputDate);
-    limit.setFullYear(limit.getFullYear() + 2);
-
-    out.innerHTML = `
-      <strong>CONSUMER PROTECTION ACT, 2019 (SECTION 69):</strong><br>
-      Limitation Period: 2 Years from Cause of Action.<br>
-      Final Date to file Consumer Complaint: <strong style="color: #b71c1c;">${limit.toDateString()}</strong>.
-    `;
-  } else if (type === 'rti') {
-    const pio = new Date(inputDate);
-    pio.setDate(pio.getDate() + 30);
-
-    const appeal = new Date(pio);
-    appeal.setDate(appeal.getDate() + 30);
-
-    out.innerHTML = `
-      <strong>RTI ACT, 2005 STATUTORY TIMELINE:</strong><br>
-      PIO 30-Day Response Deadline: <strong>${pio.toDateString()}</strong><br>
-      First Appeal Window (Section 19(1)): Must be filed by <strong style="color: #b71c1c;">${appeal.toDateString()}</strong>.
-    `;
-  } else {
-    const mact = new Date(inputDate);
-    mact.setMonth(mact.getMonth() + 6);
-
-    out.innerHTML = `
-      <strong>MOTOR VEHICLES (AMENDMENT) ACT, 2019 (SECTION 166(3)):</strong><br>
-      Limitation Period: Strictly 6 Months from date of accident.<br>
-      Final Claim Filing Deadline: <strong style="color: #b71c1c;">${mact.toDateString()}</strong>.
     `;
   }
+  const sender = String(message.sender || '');
+  const isClient = sender.includes('Client');
+  const alignment = isClient ? 'user' : 'bot';
+  return `<div class="chat-row ${alignment}"><strong>${escapeHtml(sender)}:</strong><br>${escapeHtml(message.text || '')}<div class="chat-time">${escapeHtml(message.time || '')}</div></div>`;
 }
-
-function initCountdown() {
-  const el = document.getElementById('cntTimer');
-  if (!el) return;
-
-  let totalSecs = 2 * 86400 + 14 * 3600 + 22 * 60 + 40;
-  setInterval(() => {
-    totalSecs = Math.max(0, totalSecs - 1);
-    const d = Math.floor(totalSecs / 86400);
-    const h = Math.floor((totalSecs % 86400) / 3600);
-    const m = Math.floor((totalSecs % 3600) / 60);
-    const s = totalSecs % 60;
-    el.innerText = `${String(d).padStart(2,'0')}d : ${String(h).padStart(2,'0')}h : ${String(m).padStart(2,'0')}m : ${String(s).padStart(2,'0')}s`;
-  }, 1000);
-}
-
-function exportICS(id) {
-  const ics = `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//NyayaSetu Portal//IN
-BEGIN:VEVENT
-SUMMARY:Statutory Deadline: Section 138 NI Act Notice Expiry
-DESCRIPTION:Statutory 15-day cure period expires for cheque bounce matter.
-DTSTART:20260917T090000Z
-DTEND:20260917T100000Z
-STATUS:CONFIRMED
-END:VEVENT
-END:VCALENDAR`;
-
-  downloadICS(ics, "NyayaSetu_Limitation_Event.ics");
-}
-
-function exportAllICS() {
-  const ics = `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//NyayaSetu Portal//IN
-BEGIN:VEVENT
-SUMMARY:Cheque Bounce Notice Expiry (Sharma Matter)
-DTSTART:20260917T090000Z
-DTEND:20260917T100000Z
-END:VEVENT
-BEGIN:VEVENT
-SUMMARY:First RTI Appeal Deadline (Road Works)
-DTSTART:20261005T090000Z
-DTEND:20261005T100000Z
-END:VEVENT
-END:VCALENDAR`;
-
-  downloadICS(ics, "NyayaSetu_All_Deadlines.ics");
-}
-
-function downloadICS(data, name) {
-  const blob = new Blob([data], { type: 'text/calendar;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
-  alert(`Downloaded calendar event (${name}). Open to import into Google Calendar or Outlook.`);
-}
-
-// ==========================================================================
 // ADVOCATE PRACTICE MANAGEMENT & BILLABLE STOPWATCH
 // ==========================================================================
 
-function promptNewCase() {
-  const title = prompt("Enter Case Title:", "Kulkarni vs MSEDCL");
-  if (!title) return;
-  const cnr = prompt("Enter 16-Digit CNR Number:", "MHNG01-008921-2026");
-  const court = prompt("Enter Court / Forum:", "Civil Court Senior Division, Nagpur");
-
+function renderPracticeDocket() {
+  updateBillingAuthenticatorPanel();
   const tbody = document.getElementById('tbodyMatters');
-  const tr = document.createElement('tr');
-  tr.innerHTML = `
-    <td><strong>${title}</strong><br><span style="font-size: 10px; color: #666;">New Brief</span></td>
-    <td><code>${cnr || 'PENDING'}</code></td>
-    <td>Client Confidential</td>
-    <td>${court}</td>
-    <td style="color: #b71c1c; font-weight: bold;">14-10-2026</td>
-    <td><span class="badge badge-blue">Pre-Admission</span></td>
-    <td><button type="button" class="btn btn-default btn-sm" onclick="showTab('lawyerrooms')">Open Room</button></td>
-  `;
-  tbody.prepend(tr);
+  if (!tbody || !activeProfile || activeProfile.role !== 'advocate') return;
+  const rooms = getAllRooms().filter(room => room.visibleToLawyer &&
+    (room.lawyerProfileId === activeProfile.id || (!room.lawyerProfileId && String(room.lawyerName || '').replace(/^Adv\.\s*/, '') === activeProfile.name)));
+  const matterSelect = document.getElementById('selTimerMatter');
+  if (matterSelect) matterSelect.innerHTML = rooms.length
+    ? rooms.map(room => `<option value="${escapeHtml(room.id)}">${escapeHtml(room.caseTitle)}</option>`).join('')
+    : '<option value="">No case rooms available</option>';
+  if (!rooms.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#64748b; padding:20px;">No case rooms yet. Create a room from Advocate Case Rooms.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rooms.map(room => `
+    <tr>
+      <td><strong>${escapeHtml(room.caseTitle)}</strong><br><span style="font-size:10px;color:#64748b;">Private case room</span></td>
+      <td><code>${escapeHtml(room.token)}</code></td>
+      <td>${escapeHtml(room.clientName)}</td>
+      <td>${escapeHtml(room.court)}</td>
+      <td>${escapeHtml(room.nextHearing)}</td>
+      <td><span class="badge badge-blue">Case room</span></td>
+      <td><button type="button" class="btn btn-default btn-sm" onclick="openLawyerRoom('${escapeHtml(room.id)}')">Open Room</button></td>
+    </tr>
+  `).join('');
+}
+function promptNewCase() {
+  showTab('lawyerrooms');
 }
 
 let timer = null;
 let seconds = 0;
 let running = false;
+let timerMatterId = null;
+let timerStartedAt = null;
+const BILLABLE_HOURLY_RATE = 2500;
 
 function startTimer() {
+  const matterSelect = document.getElementById('selTimerMatter');
+  if (!timerMatterId) {
+    timerMatterId = matterSelect ? matterSelect.value : '';
+    if (!timerMatterId) { alert('Select a case room before starting a billable session.'); return; }
+    timerStartedAt = new Date();
+    if (matterSelect) matterSelect.disabled = true;
+  }
   if (!running) {
     running = true;
-    document.getElementById('btnTimerStart').innerText = 'Running...';
-    timer = setInterval(() => {
-      seconds++;
-      updateTimerDisplay();
-    }, 1000);
+    const button = document.getElementById('btnTimerStart');
+    if (button) button.innerText = 'Running...';
+    timer = setInterval(() => { seconds++; updateTimerDisplay(); }, 1000);
   }
 }
 
 function pauseTimer() {
-  if (running) {
-    running = false;
-    clearInterval(timer);
-    document.getElementById('btnTimerStart').innerText = 'Resume';
-  }
+  if (!running) return;
+  running = false;
+  clearInterval(timer);
+  timer = null;
+  const button = document.getElementById('btnTimerStart');
+  if (button) button.innerText = 'Resume';
 }
 
 function updateTimerDisplay() {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
-  document.getElementById('timerDisplay').innerText = 
-    `${String(h).padStart(2,'0')} : ${String(m).padStart(2,'0')} : ${String(s).padStart(2,'0')}`;
+  const display = document.getElementById('timerDisplay');
+  if (display) display.innerText = `${String(h).padStart(2,'0')} : ${String(m).padStart(2,'0')} : ${String(s).padStart(2,'0')}`;
 }
 
 function recordBillableTime() {
   pauseTimer();
-  const matter = document.getElementById('selTimerMatter').value;
-  const activity = document.getElementById('selTimerActivity').value;
-  const hrs = (seconds / 3600).toFixed(2);
-  const bill = Math.round(hrs * 2500);
-
-  alert(`Logged Billable Entry:\n\n• Matter: ${matter}\n• Activity: ${activity}\n• Duration: ${hrs} Hours\n• Billed Amount: Rs ${bill}`);
-
+  if (!timerMatterId || !timerStartedAt || seconds <= 0) {
+    alert('Start a case-specific timer and record some time before saving the session.');
+    return;
+  }
+  const rooms = getAllRooms();
+  const room = rooms.find(item => item.id === timerMatterId && item.visibleToLawyer &&
+    (item.lawyerProfileId === activeProfile?.id || (!item.lawyerProfileId && String(item.lawyerName || '').replace(/^Adv\.\s*/, '') === activeProfile?.name)));
+  if (!room) { alert('The selected matter is no longer available in your docket.'); return; }
+  const activitySelect = document.getElementById('selTimerActivity');
+  const activity = activitySelect ? activitySelect.value : 'Legal work';
+  const endTime = new Date();
+  const hours = seconds / 3600;
+  const duration = `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m ${seconds % 60}s`;
+  const amount = Math.round(hours * BILLABLE_HOURLY_RATE);
+  room.messages = Array.isArray(room.messages) ? room.messages : [];
+  room.messages.push({
+    type: 'billing_session',
+    sender: room.lawyerName || `Adv. ${activeProfile?.name || ''}`,
+    text: 'Billable matter session recorded.',
+    time: endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    session: {
+      date: timerStartedAt.toLocaleDateString('en-GB'),
+      startTime: timerStartedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      duration,
+      durationSeconds: seconds,
+      activity,
+      hourlyRate: BILLABLE_HOURLY_RATE,
+      amount
+    }
+  });
+  saveAllRooms(rooms);
+  if (selectedLawyerRoomId === room.id) renderLawyerRoomDetail(room.id);
+  if (selectedClientRoomId === room.id) renderClientRoomDetail(room.id);
+  alert(`Saved billable session for ${room.caseTitle}: ${duration}, INR ${amount.toLocaleString('en-IN')}.`);
   seconds = 0;
+  timerMatterId = null;
+  timerStartedAt = null;
   updateTimerDisplay();
-  document.getElementById('btnTimerStart').innerText = 'Start Timer';
+  const matterSelect = document.getElementById('selTimerMatter');
+  if (matterSelect) matterSelect.disabled = false;
+  const button = document.getElementById('btnTimerStart');
+  if (button) button.innerText = 'Start Timer';
+  renderPracticeDocket();
 }
-
 // Initial page setup
 document.addEventListener('DOMContentLoaded', () => {
+  initTextSizeControls();
+  initPortalLogin();
   initApiKeyUI();
   initDigiLocker();
   renderInitialAnalysisState();
   renderPleading();
   initEcourtsCaseSearch();
-  runLimitationCalc();
-  initCountdown();
+  renderRecentSearches();
+  renderTrackedCases();
   renderClientRoom();
   renderLawyerRoom();
+  setInterval(() => { if (activeTab === 'calendar') renderTrackedCases(); }, 60000);
 });
 
 // ==========================================================================
@@ -2418,21 +2881,22 @@ let otpCountdownTimer = null;
 let currentDlUploadContext = null; // { roomId, docId }
 
 const DIGILOCKER_PROFILES = {
+  dev:{id:'dev',name:'Dev Jain',role:'citizen',roleLabel:'Client (demo account)',identifier:'XXXX0000',maskedUid:'XXXX XXXX 0000',mobile:'+91 XXXXXX0000',digilockerId:'demo://dev-jain',gender:'',dob:'',address:'No live DigiLocker identity was verified.',consentId:'DEMO-ONLY',authMethod:'Local demo simulation',authenticatedAt:'Demo session',disputeType:'General Legal Assistance',documents:[]},
   mansvi: {
     id: 'mansvi',
     name: 'Mansvi Khupse',
     role: 'citizen',
-    roleLabel: 'Citizen Litigant • e-KYC Verified',
-    identifier: '9422188990',
-    maskedUid: 'XXXX-XXXX-9182',
-    mobile: '+91 94221 88990',
-    digilockerId: 'in.gov.uidai-aadhaar-mansvi-9182',
+    roleLabel: 'Client (demo account)',
+    identifier: 'XXXX1111',
+    maskedUid: 'XXXX XXXX 1111',
+    mobile: '+91 XXXXXX1111',
+    digilockerId: 'demo://mansvi-khupse',
     gender: 'Female',
     dob: '24/11/2002',
     address: 'Civil Lines, Nagpur, Maharashtra - 440001',
-    consentId: 'DPDP-CONSENT-MK-44012-2026',
-    authMethod: 'UIDAI Aadhaar OTP (e-KYC)',
-    authenticatedAt: 'Today, 10:30 AM',
+    consentId: 'DEMO-ONLY',
+    authMethod: 'Local demo simulation',
+    authenticatedAt: 'Demo session',
     disputeType: 'Land & Property Title Dispute',
     documents: [
       {
@@ -2505,18 +2969,18 @@ const DIGILOCKER_PROFILES = {
   swati: {
     id: 'swati',
     name: 'Swati Kundu',
-    role: 'citizen',
-    roleLabel: 'Citizen Litigant • e-KYC Verified',
-    identifier: '9823011223',
-    maskedUid: 'XXXX-XXXX-7721',
-    mobile: '+91 98230 11223',
-    digilockerId: 'in.gov.uidai-aadhaar-swati-7721',
+    role: 'advocate',
+    roleLabel: 'Advocate (demo account)',
+    identifier: 'XXXX2222',
+    maskedUid: 'XXXX XXXX 2222',
+    mobile: '+91 XXXXXX2222',
+    digilockerId: 'demo://swati-kundu',
     gender: 'Female',
     dob: '18/09/2003',
     address: 'Dharampeth, Nagpur, Maharashtra - 440010',
-    consentId: 'DPDP-CONSENT-SK-88123-2026',
-    authMethod: 'UIDAI Aadhaar OTP (e-KYC)',
-    authenticatedAt: 'Today, 11:15 AM',
+    consentId: 'DEMO-ONLY',
+    authMethod: 'Local demo simulation',
+    authenticatedAt: 'Demo session',
     disputeType: 'Section 138 NI Act Cheque Dishonour',
     documents: [
       {
@@ -2590,17 +3054,17 @@ const DIGILOCKER_PROFILES = {
     id: 'bhoomi',
     name: 'Chinta Bhumika Reddy (Bhoomi)',
     role: 'citizen',
-    roleLabel: 'Citizen Litigant • e-KYC Verified',
-    identifier: '9988765432',
-    maskedUid: 'XXXX-XXXX-4529',
-    mobile: '+91 99887 65432',
-    digilockerId: 'in.gov.uidai-aadhaar-bhoomi-4529',
+    roleLabel: 'Client (demo account)',
+    identifier: 'XXXXXX32',
+    maskedUid: 'XXXX-XXXX-XX29',
+    mobile: '+91 XXXXX XXX32',
+    digilockerId: 'demo://bhoomi-reddy',
     gender: 'Female',
     dob: '05/08/2003',
     address: 'Ramdaspeth, Nagpur, Maharashtra - 440012',
-    consentId: 'DPDP-CONSENT-BR-33219-2026',
-    authMethod: 'UIDAI Aadhaar OTP (e-KYC)',
-    authenticatedAt: 'Today, 11:45 AM',
+    consentId: 'DEMO-ONLY',
+    authMethod: 'Local demo simulation',
+    authenticatedAt: 'Demo session',
     disputeType: 'Tenancy & Consumer Grievance',
     documents: [
       {
@@ -2749,7 +3213,7 @@ function renderDigiLockerHeaderUI() {
         <div class="dl-avatar">${initials}</div>
         <div class="dl-user-meta">
           <div class="dl-user-name">${user.name} <span class="dl-check-badge">✓</span></div>
-          <div class="dl-user-id">DigiLocker Verified</div>
+          <div class="dl-user-id">${user.isDemo?'Demo profile — not verified':'DigiLocker Verified'}</div>
         </div>
         <span class="dl-dropdown-arrow">▼</span>
       </div>
@@ -2758,7 +3222,7 @@ function renderDigiLockerHeaderUI() {
         <div class="dl-dropdown-header">
           <div class="dl-auth-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="#003366"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-            Verified Digital Identity
+            ${user.isDemo?'Demo Profile (Not Verified)':'Verified Digital Identity'}
           </div>
           <div class="dl-dropdown-meta-item">Name: <strong>${user.name}</strong></div>
           <div class="dl-dropdown-meta-item">ID: <strong>${user.maskedUid || user.bciReg}</strong></div>
@@ -2767,14 +3231,8 @@ function renderDigiLockerHeaderUI() {
         </div>
 
         <div class="dl-dropdown-actions">
-          <button type="button" class="dl-dropdown-btn" onclick="openDigiLockerVault()">
-            Open DigiLocker Vault (${(user.documents && user.documents.length) || 5} Docs)
-          </button>
           <button type="button" class="dl-dropdown-btn" onclick="showDpdpAuditModal()">
             DPDP Act 2023 Consent Audit Trail
-          </button>
-          <button type="button" class="dl-dropdown-btn" onclick="openDigiLockerModal(1)">
-            Switch Account / Re-authenticate
           </button>
           <button type="button" class="dl-dropdown-btn btn-danger-link" onclick="logoutDigiLocker()">
             Sign Out of DigiLocker
@@ -2813,14 +3271,15 @@ function handleModalOverlayClick(e, modalId) {
   }
 }
 
-let activeTeamMember = 'mansvi';
+let activeTeamMember = 'dev';
 
-function openDigiLockerModal(step = 1) {
+function openDigiLockerModal(step = 1, requestedMode = null) {
   const modal = document.getElementById('modalDigiLockerLogin');
   if (!modal) return;
   modal.style.display = 'flex';
   
-  selectTeamMember(activeTeamMember || 'mansvi');
+  selectTeamMember(activeTeamMember || 'dev');
+  switchDlGatewayMode(requestedMode || (activeProfile ? activeDlGatewayMode : 'sandbox'));
   showDlStep(step);
 }
 
@@ -2828,19 +3287,14 @@ function closeDigiLockerModal() {
   const modal = document.getElementById('modalDigiLockerLogin');
   if (modal) modal.style.display = 'none';
   if (otpCountdownTimer) clearInterval(otpCountdownTimer);
+  if (currentDlUploadContext && getDigiLockerUser()) openDigiLockerVault();
+  if (!activeProfile && !getDigiLockerUser()) showWelcomePage();
 }
 
 function showDlStep(stepNum) {
   document.getElementById('dlStep1View').style.display = stepNum === 1 ? 'block' : 'none';
   document.getElementById('dlStep2View').style.display = stepNum === 2 ? 'block' : 'none';
   document.getElementById('dlStep3View').style.display = stepNum === 3 ? 'block' : 'none';
-
-  for (let i = 1; i <= 3; i++) {
-    const ind = document.getElementById(`dlStepIndicator${i}`);
-    if (ind) {
-      ind.className = i === stepNum ? 'dl-step-item active' : (i < stepNum ? 'dl-step-item completed' : 'dl-step-item');
-    }
-  }
 }
 
 function selectTeamMember(memberKey) {
@@ -2849,7 +3303,7 @@ function selectTeamMember(memberKey) {
   const profile = DIGILOCKER_PROFILES[memberKey];
 
   // Update card highlights
-  ['mansvi', 'swati', 'bhoomi'].forEach(key => {
+  ['dev', 'mansvi', 'swati'].forEach(key => {
     const card = document.getElementById(`cardMember_${key}`);
     if (card) {
       if (key === memberKey) card.classList.add('active');
@@ -2858,24 +3312,20 @@ function selectTeamMember(memberKey) {
   });
 
   // Pre-fill inputs
-  const inpIdentifier = document.getElementById('inpDlIdentifier');
-  const inpPin = document.getElementById('inpDlPin');
   const consentName = document.getElementById('lblSelectedLitigantConsent');
   const maskedPhone = document.getElementById('lblDlMaskedPhone');
 
-  if (inpIdentifier) inpIdentifier.value = profile.identifier;
-  if (inpPin) inpPin.value = '123456';
   if (consentName) consentName.innerText = profile.name;
   if (maskedPhone) maskedPhone.innerText = profile.mobile;
 }
 
 function instantTeamLogin(memberKey) {
-  const key = memberKey || activeTeamMember || 'mansvi';
+  const key = memberKey || activeTeamMember || 'dev';
   const profile = DIGILOCKER_PROFILES[key];
   if (!profile) return;
 
   // Save to storage
-  setDigiLockerUser(profile);
+  setDigiLockerUser({ ...profile, isDemo:true });
 
   // Populate step 3 preview card
   const initials = profile.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
@@ -2899,10 +3349,11 @@ function instantTeamLogin(memberKey) {
 
   // Advance straight to step 3
   showDlStep(3);
+  activatePortalProfile(key);
 }
 
 function sendDigiLockerOtp() {
-  const profile = DIGILOCKER_PROFILES[activeTeamMember || 'mansvi'];
+  const profile = DIGILOCKER_PROFILES[activeTeamMember || 'dev'];
   const maskedPhone = profile ? profile.mobile : '+91 94221 88990';
   const lblPhone = document.getElementById('lblDlMaskedPhone');
   if (lblPhone) lblPhone.innerText = maskedPhone;
@@ -3008,10 +3459,10 @@ function verifyDigiLockerOtp() {
   }
 
   // Get active team member profile
-  const user = DIGILOCKER_PROFILES[activeTeamMember || 'mansvi'];
+  const user = DIGILOCKER_PROFILES[activeTeamMember || 'dev'];
 
-  // Save to storage
-  setDigiLockerUser(user);
+  // This is a local demo OTP, not a live DigiLocker OTP.
+  setDigiLockerUser({ ...user, isDemo:true });
 
   // Populate step 3 preview card
   const initials = user.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
@@ -3023,18 +3474,21 @@ function verifyDigiLockerOtp() {
   document.getElementById('dlVerifiedMobile').innerText = user.mobile;
   document.getElementById('dlVerifiedAddress').innerText = user.address;
   document.getElementById('dlVerifiedConsentRef').innerText = user.consentId;
-
+  activatePortalProfile(activeTeamMember || 'dev');
 }
 
 function logoutDigiLocker() {
   const user = getDigiLockerUser();
   const userName = user ? user.name : 'User';
+  localStorage.removeItem(PORTAL_SESSION_KEY);
+  activeProfile = null;
   setDigiLockerUser(null);
   
   const menu = document.getElementById('digilockerDropdownMenu');
   if (menu) menu.style.display = 'none';
 
   alert(`Signed out of DigiLocker (${userName}). Your local session has been cleared.`);
+  openDigiLockerModal(1,'sandbox');
 }
 
 function openDigiLockerVault() {
@@ -3065,12 +3519,12 @@ function openDigiLockerVault() {
 
   if (container && user.documents) {
     container.innerHTML = user.documents.map((doc, idx) => {
+      const attachLabel = currentDlUploadContext && currentDlUploadContext.mode === 'send' ? 'Send to Case Room' : 'Attach to Request';
       const attachBtn = currentDlUploadContext ? `
         <button type="button" class="btn btn-success btn-sm" onclick="attachDigiLockerDocToRoom(${idx})" style="padding: 4px 10px;">
-          Attach to Room
+          ${attachLabel}
         </button>
       ` : '';
-
       return `
         <div class="dl-vault-card">
           <div class="dl-vault-doc-info">
@@ -3104,10 +3558,18 @@ function closeDigiLockerVault() {
 }
 
 function openDigiLockerVaultForUpload(roomId, docId) {
-  currentDlUploadContext = { roomId, docId };
-  const user = getDigiLockerUser();
-  if (!user) {
-    alert('Please sign in with DigiLocker to access your digitally verified documents.');
+  currentDlUploadContext = { roomId, docId, mode: 'request' };
+  if (!getDigiLockerUser()) {
+    openDigiLockerModal(1);
+    return;
+  }
+  openDigiLockerVault();
+}
+
+function openDigiLockerVaultForRoomSend(roomId) {
+  if (!roomId) return;
+  currentDlUploadContext = { roomId, mode: 'send' };
+  if (!getDigiLockerUser()) {
     openDigiLockerModal(1);
     return;
   }
@@ -3116,38 +3578,57 @@ function openDigiLockerVaultForUpload(roomId, docId) {
 
 function attachDigiLockerDocToRoom(docIndex) {
   if (!currentDlUploadContext) return;
-  const { roomId, docId } = currentDlUploadContext;
+  const { roomId, docId, mode } = currentDlUploadContext;
   const user = getDigiLockerUser();
   if (!user || !user.documents || !user.documents[docIndex]) return;
 
   const docData = user.documents[docIndex];
   const rooms = getAllRooms();
-  const room = rooms.find(r => r.id === roomId);
+  const room = rooms.find(item => item.id === roomId);
   if (!room) return;
 
-  const targetDoc = room.documents.find(d => d.id === docId);
-  if (targetDoc) {
-    targetDoc.file = docData.file;
-    targetDoc.filePath = docData.filePath || 'Example_Files/2. Unit II -OFDM Transmitter Numericals_compressed.pdf';
-    targetDoc.status = 'uploaded';
-    targetDoc.uploadDate = new Date().toLocaleDateString('en-GB');
-    targetDoc.isDigiLockerVerified = true;
-    targetDoc.digiLockerDocName = docData.name;
-    targetDoc.digiLockerHash = docData.hash;
-
-    // Add note to case chat
+  if (mode === 'send') {
+    const nextId = room.documents.reduce((maxId, item) => Math.max(maxId, Number(item.id) || 0), 0) + 1;
+    room.documents.push({
+      id: nextId,
+      name: docData.name,
+      dueDate: 'Shared by client',
+      file: docData.file,
+      filePath: docData.filePath || '',
+      status: 'uploaded',
+      uploadDate: new Date().toLocaleDateString('en-GB'),
+      source: 'DigiLocker profile vault',
+      isDigiLockerVerified: false
+    });
     room.messages.push({
       sender: `${user.name} (Client)`,
-      text: `Attached verified DigiLocker document: "${docData.name}" (${docData.issuer}) with cryptographic SHA-256 seal.`,
+      text: `Shared a document from the signed-in DigiLocker profile vault: "${docData.name}" (${docData.issuer}).`,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     });
-
     saveAllRooms(rooms);
     closeDigiLockerVault();
-    alert(`Successfully attached "${docData.name}" from DigiLocker Vault into Case Room #${roomId}!`);
+    alert(`Shared "${docData.name}" with Case Room #${roomId}.`);
+    return;
   }
-}
 
+  const targetDoc = room.documents.find(item => item.id === docId);
+  if (!targetDoc) return;
+  targetDoc.file = docData.file;
+  targetDoc.filePath = docData.filePath || 'Example_Files/2. Unit II -OFDM Transmitter Numericals_compressed.pdf';
+  targetDoc.status = 'uploaded';
+  targetDoc.uploadDate = new Date().toLocaleDateString('en-GB');
+  targetDoc.isDigiLockerVerified = true;
+  targetDoc.digiLockerDocName = docData.name;
+  targetDoc.digiLockerHash = docData.hash;
+  room.messages.push({
+    sender: `${user.name} (Client)`,
+    text: `Attached verified DigiLocker document: "${docData.name}" (${docData.issuer}) with cryptographic SHA-256 seal.`,
+    time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  });
+  saveAllRooms(rooms);
+  closeDigiLockerVault();
+  alert(`Successfully attached "${docData.name}" from DigiLocker Vault into Case Room #${roomId}!`);
+}
 function previewDigiLockerDoc(docIndex) {
   const user = getDigiLockerUser();
   if (!user || !user.documents || !user.documents[docIndex]) return;
@@ -3223,32 +3704,6 @@ function autofillFromDigiLocker() {
   showDrafterToast(`Auto-filled verified identity: ${user.name} (${user.maskedUid || user.bciReg || 'e-KYC Verified'})`);
 }
 
-function importLandRecordFromDigiLocker() {
-  const user = getDigiLockerUser();
-  if (!user) {
-    alert('Please sign in with DigiLocker to access your issued land records and 7/12 extracts.');
-    openDigiLockerModal(1);
-    return;
-  }
-
-  const selState = document.getElementById('selLandState');
-  const selDist = document.getElementById('selLandDist');
-  const inpTaluka = document.getElementById('inpTaluka');
-  const inpVillage = document.getElementById('inpVillage');
-  const inpSurvey = document.getElementById('inpSurvey');
-
-  if (selState) selState.value = 'MH';
-  if (selDist) selDist.value = 'Nagpur';
-  if (inpTaluka) inpTaluka.value = 'Nagpur Rural';
-  if (inpVillage) inpVillage.value = 'Wadi';
-  if (inpSurvey) inpSurvey.value = '142/2';
-
-  if (typeof searchLandRecord === 'function') {
-    searchLandRecord();
-  }
-
-  alert(`Imported verified 7/12 extract from DigiLocker:\n\n• Owner: ${user.name}\n• Location: Mouza Wadi, Taluka Nagpur Rural, District Nagpur\n• Survey No: 142/2\n• Certified under DILRMP Gateway`);
-}
 
 function showDpdpAuditModal() {
   const user = getDigiLockerUser();
@@ -3290,7 +3745,7 @@ function switchDlGatewayMode(mode) {
   if (mode === 'live') {
     fetchDigiLockerServerConfig();
   } else if (mode === 'sandbox') {
-    selectTeamMember(activeTeamMember || 'mansvi');
+    selectTeamMember(activeTeamMember || 'dev');
   }
 }
 

@@ -22,7 +22,7 @@ const IP_RATE_LIMIT_MAX = 10; // Max 10 searches per minute per IP
 const IP_RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute window
 
 // In-Memory Sessions: Map<sessionId, SessionData>
-// SessionData: { id, cnr, cookies: Map<name, val>, appToken, lastRequestTime, lock: Promise, createdAt }
+// SessionData: { id, cnr, cookies, appToken, ajaxHeaders, lastRequestTime, lock, createdAt }
 const sessions = new Map();
 
 // In-Memory IP Rate Limiter: Map<ip, Array<timestamp>>
@@ -78,6 +78,7 @@ function httpsRequest(urlStr, options = {}, postData = null) {
       method: options.method || 'GET',
       headers: {
         'User-Agent': USER_AGENT,
+        'Accept-Language': 'en-US,en;q=0.5',
         ...(options.headers || {})
       },
       timeout: 15000 // 15 second network timeout
@@ -152,6 +153,90 @@ function extractAppToken(html) {
 }
 
 /**
+ * Resolve the rotating eCourts AJAX headers from the portal's own
+ * components.js for this session. These values change and must not be
+ * hard-coded between sessions.
+ */
+async function loadAjaxHeaders(session, homeHtml) {
+  const scriptMatch = String(homeHtml || '').match(/src=["']([^"']*components\.js[^"']*)["']/i);
+  const scriptUrl = scriptMatch
+    ? new URL(scriptMatch[1], `${ECOURTS_BASE_URL}/ecourtindia_v6/`).toString()
+    : `${ECOURTS_BASE_URL}/ecourtindia_v6/js/components.js`;
+
+  await enforcePoliteDelay(session);
+  const response = await httpsRequest(scriptUrl, {
+    method: 'GET',
+    headers: {
+      'Accept': '*/*',
+      'Referer': `${ECOURTS_BASE_URL}/ecourtindia_v6/`,
+      'Cookie': formatCookieHeader(session.cookies)
+    }
+  });
+  parseSetCookieHeaders(session.cookies, response.headers['set-cookie']);
+
+  const delimiterMatch = response.body.match(/(?:var|let|const)\s+delimeter\s*=\s*(["'])(.*?)\1/i);
+  const headersMatch = response.body.match(/headers\s*:\s*\{([^}]+)\}/i);
+  const headerNames = headersMatch
+    ? [...headersMatch[1].matchAll(/["']([^"']+)["']\s*:\s*delimeter/gi)].map(match => match[1])
+    : [];
+  const customHeader = headerNames.find(name => name.toLowerCase() !== 'delimeter');
+
+  if (response.statusCode < 200 || response.statusCode >= 300 || !delimiterMatch || !customHeader) {
+    const err = new Error('Could not initialize the official eCourts request session. Please start a new search shortly.');
+    err.code = 'PORTAL_SESSION_INIT_FAILED';
+    err.status = 503;
+    throw err;
+  }
+
+  const delimiter = delimiterMatch[2];
+  session.ajaxHeaders = { delimeter: delimiter, [customHeader]: delimiter };
+}
+
+/**
+ * Ask eCourts to create a captcha challenge for this session, then fetch the
+ * exact image URL returned by that challenge. Fetching securimage directly
+ * does not reliably bind the image to the CNR search session.
+ */
+async function fetchCaptchaChallenge(session) {
+  await enforcePoliteDelay(session);
+  const body = new URLSearchParams({
+    ajax_req: 'true',
+    app_token: session.appToken || ''
+  }).toString();
+
+  const response = await httpsRequest(`${ECOURTS_BASE_URL}/ecourtindia_v6/?p=casestatus/getCaptcha`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json, text/javascript, */*; q=0.01',
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Referer': `${ECOURTS_BASE_URL}/ecourtindia_v6/`,
+      'Cookie': formatCookieHeader(session.cookies),
+      ...session.ajaxHeaders,
+      'Content-Length': Buffer.byteLength(body)
+    }
+  }, body);
+  parseSetCookieHeaders(session.cookies, response.headers['set-cookie']);
+
+  let challenge;
+  try {
+    challenge = JSON.parse(response.body);
+  } catch {
+    challenge = null;
+  }
+  const captchaMatch = challenge?.div_captcha?.match(/src=["']([^"']*securimage_show\.php[^"']*)["']/i);
+  if (response.statusCode < 200 || response.statusCode >= 300 || !captchaMatch) {
+    const err = new Error('The official eCourts portal could not create a captcha for this session. Please start a new search.');
+    err.code = 'PORTAL_CAPTCHA_INIT_FAILED';
+    err.status = 503;
+    throw err;
+  }
+
+  session.appToken = challenge.app_token || session.appToken || '';
+  return fetchCaptchaImage(session, captchaMatch[1].replace(/&amp;/g, '&'));
+}
+
+/**
  * Enforce minimum politeness delay between requests on the same session
  */
 async function enforcePoliteDelay(session) {
@@ -191,6 +276,12 @@ async function fetchCaptchaImage(session, customCaptchaPath = null) {
   parseSetCookieHeaders(session.cookies, res.headers['set-cookie']);
 
   const contentType = res.headers['content-type'] || 'image/png';
+  if (!contentType.toLowerCase().startsWith('image/')) {
+    const err = new Error('The official eCourts portal returned a page instead of a captcha image. Please start a fresh search.');
+    err.code = 'PORTAL_CAPTCHA_INIT_FAILED';
+    err.status = 503;
+    throw err;
+  }
   return `data:${contentType};base64,${res.raw.toString('base64')}`;
 }
 
@@ -225,6 +316,7 @@ async function startSearch(rawCnr, clientIp) {
     cnr: cleanedCnr,
     cookies: new Map(),
     appToken: '',
+    ajaxHeaders: {},
     lastRequestTime: 0,
     lock: Promise.resolve(),
     createdAt: Date.now()
@@ -244,8 +336,10 @@ async function startSearch(rawCnr, clientIp) {
     // Extract app_token from home HTML if present
     session.appToken = extractAppToken(homeRes.body);
 
-    // Replicated Step 2: GET securimage_show.php
-    const captchaImage = await fetchCaptchaImage(session);
+    // eCourts rotates its AJAX verification headers and creates a challenge
+    // through getCaptcha. The returned image is bound to this server session.
+    await loadAjaxHeaders(session, homeRes.body);
+    const captchaImage = await fetchCaptchaChallenge(session);
 
     sessions.set(sessionId, session);
 
@@ -254,7 +348,7 @@ async function startSearch(rawCnr, clientIp) {
       captchaImage
     };
   } catch (err) {
-    if (err.code === 'RATE_LIMITED' || err.code === 'INVALID_CNR') throw err;
+    if (err.code === 'RATE_LIMITED' || err.code === 'INVALID_CNR' || err.code === 'PORTAL_SESSION_INIT_FAILED' || err.code === 'PORTAL_CAPTCHA_INIT_FAILED') throw err;
     const portalErr = new Error('PORTAL_UNAVAILABLE');
     portalErr.code = 'PORTAL_UNAVAILABLE';
     portalErr.status = 503;
@@ -286,9 +380,10 @@ async function refreshCaptcha(sessionId, clientIp) {
   // Mutex lock to guarantee one request at a time per session
   return (session.lock = session.lock.catch(() => {}).then(async () => {
     try {
-      const captchaImage = await fetchCaptchaImage(session);
+      const captchaImage = await fetchCaptchaChallenge(session);
       return { sessionId, captchaImage };
     } catch (err) {
+      if (err.code === 'PORTAL_CAPTCHA_INIT_FAILED' || err.code === 'PORTAL_SESSION_INIT_FAILED') throw err;
       const portalErr = new Error('PORTAL_UNAVAILABLE');
       portalErr.code = 'PORTAL_UNAVAILABLE';
       portalErr.status = 503;
@@ -351,8 +446,7 @@ async function submitSearch(sessionId, rawCaptcha, clientIp) {
           'X-Requested-With': 'XMLHttpRequest',
           'Referer': `${ECOURTS_BASE_URL}/ecourtindia_v6/`,
           'Cookie': formatCookieHeader(session.cookies),
-          'delimeter': 'sghder54',
-          'Weritr645': 'sghder54',
+          ...session.ajaxHeaders,
           'Content-Length': Buffer.byteLength(postBody)
         }
       }, postBody);

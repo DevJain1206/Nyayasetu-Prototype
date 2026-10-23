@@ -139,9 +139,11 @@
         const data = await res.json();
 
         if (data.success && data.user) {
-          // Real token exchange succeeded!
-          localStorage.setItem('nyayasetu_digilocker_user', JSON.stringify(data.user));
-          
+          const ids={'dev jain':'dev','mansvi khupse':'mansvi','swati kundu':'swati'};
+          const name=String(data.user.name||'').trim().toLowerCase().replace(/\s+/g,' '), portalId=ids[name];
+          if(!portalId){spinnerEl.style.display='none';titleEl.innerText='DigiLocker identity is not mapped to a portal profile';titleEl.style.color='#b45309';msgEl.innerText='This prototype grants access only to configured profiles. Ask the portal administrator to map this verified identity.';actionEl.style.display='block';return;}
+          localStorage.setItem('nyayasetu_digilocker_user',JSON.stringify(data.user));
+          localStorage.setItem('nyayasetu_portal_profile',JSON.stringify({id:portalId}));
           titleEl.innerText = 'DigiLocker Verified Successfully!';
           titleEl.style.color = '#16a34a';
           msgEl.innerText = `Welcome, ${data.user.name}. Redirecting back to NyayaSetu...`;
